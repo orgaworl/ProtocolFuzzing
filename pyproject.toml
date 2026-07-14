@@ -1,7 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "protocolfuzzing"
 version = "0.1.0"
-description = "Add your description here"
+description = "CAN protocol fuzzing experiment framework"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "python-can>=4.4",
+]
+
+[project.scripts]
+fuzz = "can_fuzzing.cli:fuzz_main"
+plot = "can_fuzzing.cli:plot_main"
+clean = "can_fuzzing.cli:clean_main"
+list = "can_fuzzing.cli:list_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

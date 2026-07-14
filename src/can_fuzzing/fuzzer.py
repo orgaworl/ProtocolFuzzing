@@ -1,0 +1,259 @@
+from __future__ import annotations
+
+import csv
+import json
+import random
+from dataclasses import dataclass
+from pathlib import Path
+
+from .adapters import CANHardwareAdapter
+from .models import CANFrame, FrameFormat, FrameType
+
+
+@dataclass(frozen=True)
+class FuzzConfig:
+    cases: int = 1000
+    seed: int = 1337
+    campaign: str = "can_baseline"
+    output_dir: Path = Path("result")
+    interface: str = "socketcan"
+    channel: str = "can0"
+    bitrate: int | None = 500000
+    receive_timeout: float = 0.05
+    inter_frame_delay_ms: float = 5.0
+    fd: bool = False
+    data_bitrate: int | None = None
+    id_min: int = 0x000
+    id_max: int = 0x7FF
+    diagnostic_bias: float = 0.6
+    extended_probability: float = 0.0
+    include_remote: bool = False
+    include_error: bool = False
+
+
+@dataclass(frozen=True)
+class FuzzResult:
+    campaign: str
+    cases: int
+    sent: int
+    faults: int
+    responses: int
+    unique_reasons: int
+    coverage_points: int
+    csv_path: Path
+    summary_path: Path
+
+
+def run_fuzzing(config: FuzzConfig) -> FuzzResult:
+    rng = random.Random(config.seed)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    csv_path = config.output_dir / f"{config.campaign}_cases.csv"
+    summary_path = config.output_dir / f"{config.campaign}_summary.json"
+
+    sent = 0
+    faults = 0
+    responses = 0
+    reasons: set[str] = set()
+    coverage: set[str] = set()
+
+    with CANHardwareAdapter(
+        interface=config.interface,
+        channel=config.channel,
+        bitrate=config.bitrate,
+        receive_timeout=config.receive_timeout,
+        fd=config.fd,
+        data_bitrate=config.data_bitrate,
+    ) as adapter, csv_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "case_id",
+                "timestamp_ms",
+                "identifier",
+                "frame_format",
+                "frame_type",
+                "dlc",
+                "payload_hex",
+                "sent",
+                "accepted",
+                "fault",
+                "state",
+                "reason",
+                "response_count",
+                "response_ids",
+                "response_payloads",
+                "latency_ms",
+                "error",
+                "coverage_count",
+            ],
+        )
+        writer.writeheader()
+
+        current_timestamp_ms = 0
+        for case_id in range(config.cases):
+            frame = generate_frame(rng, case_id, current_timestamp_ms, config)
+            current_timestamp_ms = frame.timestamp_ms
+            observation = adapter.transact(frame)
+
+            sent += int(observation.sent)
+            faults += int(observation.fault)
+            responses += observation.response_count
+            reasons.add(observation.reason)
+            coverage.update(classify_coverage(frame, observation))
+
+            writer.writerow(
+                {
+                    "case_id": case_id,
+                    "timestamp_ms": frame.timestamp_ms,
+                    "identifier": frame.identifier,
+                    "frame_format": frame.frame_format.value,
+                    "frame_type": frame.frame_type.value,
+                    "dlc": frame.dlc,
+                    "payload_hex": frame.to_hex_payload(),
+                    "sent": int(observation.sent),
+                    "accepted": int(observation.sent),
+                    "fault": int(observation.fault),
+                    "state": observation.state,
+                    "reason": observation.reason,
+                    "response_count": observation.response_count,
+                    "response_ids": encode_int_list(observation.response_ids),
+                    "response_payloads": ";".join(observation.response_payloads),
+                    "latency_ms": f"{observation.latency_ms:.3f}",
+                    "error": observation.error,
+                    "coverage_count": len(coverage),
+                }
+            )
+
+            if config.inter_frame_delay_ms > 0:
+                sleep_seconds(config.inter_frame_delay_ms / 1000.0)
+
+    summary = {
+        "campaign": config.campaign,
+        "cases": config.cases,
+        "seed": config.seed,
+        "interface": config.interface,
+        "channel": config.channel,
+        "bitrate": config.bitrate,
+        "fd": config.fd,
+        "sent": sent,
+        "faults": faults,
+        "responses": responses,
+        "send_rate": sent / config.cases if config.cases else 0.0,
+        "fault_rate": faults / config.cases if config.cases else 0.0,
+        "response_rate": responses / config.cases if config.cases else 0.0,
+        "unique_reasons": len(reasons),
+        "coverage_points": len(coverage),
+        "csv_path": str(csv_path),
+    }
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    return FuzzResult(
+        campaign=config.campaign,
+        cases=config.cases,
+        sent=sent,
+        faults=faults,
+        responses=responses,
+        unique_reasons=len(reasons),
+        coverage_points=len(coverage),
+        csv_path=csv_path,
+        summary_path=summary_path,
+    )
+
+
+def generate_frame(rng: random.Random, case_id: int, current_timestamp_ms: int, config: FuzzConfig) -> CANFrame:
+    frame_format = choose_frame_format(rng, config)
+    frame_type = choose_frame_type(rng, config)
+    identifier = choose_identifier(rng, frame_format, config)
+    data = choose_payload(rng, identifier, config)
+    timestamp_ms = current_timestamp_ms + max(1, int(config.inter_frame_delay_ms))
+
+    return CANFrame(
+        identifier=identifier,
+        data=data,
+        frame_format=frame_format,
+        frame_type=frame_type,
+        timestamp_ms=timestamp_ms,
+    )
+
+
+def choose_frame_format(rng: random.Random, config: FuzzConfig) -> FrameFormat:
+    if rng.random() < config.extended_probability:
+        return FrameFormat.EXTENDED
+    return FrameFormat.STANDARD
+
+
+def choose_frame_type(rng: random.Random, config: FuzzConfig) -> FrameType:
+    choices = [FrameType.DATA]
+    weights = [1.0]
+    if config.include_remote:
+        choices.append(FrameType.REMOTE)
+        weights.append(0.05)
+    if config.include_error:
+        choices.append(FrameType.ERROR)
+        weights.append(0.02)
+    return rng.choices(choices, weights=weights, k=1)[0]
+
+
+def choose_identifier(rng: random.Random, frame_format: FrameFormat, config: FuzzConfig) -> int:
+    upper_limit = 0x7FF if frame_format == FrameFormat.STANDARD else 0x1FFFFFFF
+    id_min = max(0, min(config.id_min, upper_limit))
+    id_max = max(id_min, min(config.id_max, upper_limit))
+    diagnostic_ids = [0x7DF, 0x7E0, 0x7E1, 0x7E2, 0x7E3, 0x7E4, 0x7E5, 0x7E6, 0x7E7]
+    diagnostic_ids = [value for value in diagnostic_ids if id_min <= value <= id_max]
+    if diagnostic_ids and rng.random() < config.diagnostic_bias:
+        return rng.choice(diagnostic_ids)
+    return rng.randint(id_min, id_max)
+
+
+def choose_payload(rng: random.Random, identifier: int, config: FuzzConfig) -> bytes:
+    if identifier in {0x7DF, 0x7E0, 0x7E1, 0x7E2, 0x7E3, 0x7E4, 0x7E5, 0x7E6, 0x7E7} and rng.random() < 0.75:
+        templates = [
+            [0x02, 0x10, 0x01],
+            [0x02, 0x10, 0x03],
+            [0x02, 0x27, 0x01],
+            [0x04, 0x27, 0x02, 0x12, 0x34],
+            [0x03, 0x22, 0xF1, 0x90],
+            [0x04, 0x31, 0x01, 0xFF, 0x00],
+            [0x01, 0x3E],
+        ]
+        data = rng.choice(templates)
+        return bytes(pad_classic_payload(data, rng))
+
+    max_len = 64 if config.fd else 8
+    interesting_lengths = [0, 1, 2, 3, 4, 7, 8]
+    if config.fd:
+        interesting_lengths.extend([12, 16, 32, 48, 64])
+    length = rng.choice([value for value in interesting_lengths if value <= max_len])
+    return bytes(rng.randrange(256) for _ in range(length))
+
+
+def pad_classic_payload(data: list[int], rng: random.Random) -> list[int]:
+    data = data[:8]
+    if len(data) < 8 and rng.random() < 0.7:
+        data = data + [0x00] * (8 - len(data))
+    return data
+
+
+def classify_coverage(frame: CANFrame, observation) -> set[str]:
+    points = {
+        f"tx_id_{frame.identifier:x}",
+        f"format_{frame.frame_format.value}",
+        f"type_{frame.frame_type.value}",
+        f"reason_{observation.reason}",
+    }
+    if frame.data:
+        points.add(f"service_{frame.data[1]:02x}" if frame.data[0] <= 0x07 and len(frame.data) > 1 else f"byte0_{frame.data[0]:02x}")
+    for response_id in observation.response_ids:
+        points.add(f"rx_id_{response_id:x}")
+    return points
+
+
+def encode_int_list(values: list[int]) -> str:
+    return ";".join(f"0x{value:x}" for value in values)
+
+
+def sleep_seconds(seconds: float) -> None:
+    import time
+
+    time.sleep(seconds)
