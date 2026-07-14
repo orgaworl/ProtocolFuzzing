@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import random
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,12 +31,16 @@ class FuzzConfig:
     extended_probability: float = 0.0
     include_remote: bool = False
     include_error: bool = False
+    progress_interval: int = 100
+    progress_seconds: float = 1.0
 
 
 @dataclass(frozen=True)
 class FuzzResult:
     campaign: str
     cases: int
+    completed_cases: int
+    interrupted: bool
     sent: int
     faults: int
     responses: int
@@ -44,7 +50,7 @@ class FuzzResult:
     summary_path: Path
 
 
-def run_fuzzing(config: FuzzConfig) -> FuzzResult:
+def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> FuzzResult:
     rng = random.Random(config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -54,6 +60,8 @@ def run_fuzzing(config: FuzzConfig) -> FuzzResult:
     sent = 0
     faults = 0
     responses = 0
+    completed_cases = 0
+    interrupted = False
     reasons: set[str] = set()
     coverage: set[str] = set()
 
@@ -65,92 +73,72 @@ def run_fuzzing(config: FuzzConfig) -> FuzzResult:
         fd=config.fd,
         data_bitrate=config.data_bitrate,
     ) as adapter, csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(
-            fh,
-            fieldnames=[
-                "case_id",
-                "timestamp_ms",
-                "identifier",
-                "frame_format",
-                "frame_type",
-                "dlc",
-                "payload_hex",
-                "sent",
-                "accepted",
-                "fault",
-                "state",
-                "reason",
-                "response_count",
-                "response_ids",
-                "response_payloads",
-                "latency_ms",
-                "error",
-                "coverage_count",
-            ],
-        )
+        writer = csv.DictWriter(fh, fieldnames=result_fieldnames())
         writer.writeheader()
+        fh.flush()
 
         current_timestamp_ms = 0
-        for case_id in range(config.cases):
-            frame = generate_frame(rng, case_id, current_timestamp_ms, config)
-            current_timestamp_ms = frame.timestamp_ms
-            observation = adapter.transact(frame)
+        try:
+            for case_id in range(config.cases):
+                frame = generate_frame(rng, case_id, current_timestamp_ms, config)
+                current_timestamp_ms = frame.timestamp_ms
+                observation = adapter.transact(frame)
 
-            sent += int(observation.sent)
-            faults += int(observation.fault)
-            responses += observation.response_count
-            reasons.add(observation.reason)
-            coverage.update(classify_coverage(frame, observation))
+                sent += int(observation.sent)
+                faults += int(observation.fault)
+                responses += observation.response_count
+                reasons.add(observation.reason)
+                coverage.update(classify_coverage(frame, observation))
 
-            writer.writerow(
-                {
-                    "case_id": case_id,
-                    "timestamp_ms": frame.timestamp_ms,
-                    "identifier": frame.identifier,
-                    "frame_format": frame.frame_format.value,
-                    "frame_type": frame.frame_type.value,
-                    "dlc": frame.dlc,
-                    "payload_hex": frame.to_hex_payload(),
-                    "sent": int(observation.sent),
-                    "accepted": int(observation.sent),
-                    "fault": int(observation.fault),
-                    "state": observation.state,
-                    "reason": observation.reason,
-                    "response_count": observation.response_count,
-                    "response_ids": encode_int_list(observation.response_ids),
-                    "response_payloads": ";".join(observation.response_payloads),
-                    "latency_ms": f"{observation.latency_ms:.3f}",
-                    "error": observation.error,
-                    "coverage_count": len(coverage),
-                }
-            )
+                writer.writerow(
+                    {
+                        "case_id": case_id,
+                        "timestamp_ms": frame.timestamp_ms,
+                        "identifier": frame.identifier,
+                        "frame_format": frame.frame_format.value,
+                        "frame_type": frame.frame_type.value,
+                        "dlc": frame.dlc,
+                        "payload_hex": frame.to_hex_payload(),
+                        "sent": int(observation.sent),
+                        "accepted": int(observation.sent),
+                        "fault": int(observation.fault),
+                        "state": observation.state,
+                        "reason": observation.reason,
+                        "response_count": observation.response_count,
+                        "response_ids": encode_int_list(observation.response_ids),
+                        "response_payloads": ";".join(observation.response_payloads),
+                        "latency_ms": f"{observation.latency_ms:.3f}",
+                        "error": observation.error,
+                        "coverage_count": len(coverage),
+                    }
+                )
+                completed_cases += 1
+                fh.flush()
 
-            if config.inter_frame_delay_ms > 0:
-                sleep_seconds(config.inter_frame_delay_ms / 1000.0)
+                if config.inter_frame_delay_ms > 0:
+                    sleep_seconds(config.inter_frame_delay_ms / 1000.0)
+        except KeyboardInterrupt:
+            interrupted = True
+            fh.flush()
 
-    summary = {
-        "campaign": config.campaign,
-        "cases": config.cases,
-        "seed": config.seed,
-        "interface": config.interface,
-        "channel": config.channel,
-        "bitrate": config.bitrate,
-        "fd": config.fd,
-        "sent": sent,
-        "faults": faults,
-        "responses": responses,
-        "send_rate": sent / config.cases if config.cases else 0.0,
-        "fault_rate": faults / config.cases if config.cases else 0.0,
-        "response_rate": responses / config.cases if config.cases else 0.0,
-        "unique_reasons": len(reasons),
-        "coverage_points": len(coverage),
-        "csv_path": str(csv_path),
-    }
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_summary(
+        summary_path=summary_path,
+        config=config,
+        csv_path=csv_path,
+        sent=sent,
+        faults=faults,
+        responses=responses,
+        completed_cases=completed_cases,
+        interrupted=interrupted,
+        reasons=reasons,
+        coverage=coverage,
+    )
 
     return FuzzResult(
         campaign=config.campaign,
         cases=config.cases,
+        completed_cases=completed_cases,
+        interrupted=interrupted,
         sent=sent,
         faults=faults,
         responses=responses,
@@ -159,6 +147,104 @@ def run_fuzzing(config: FuzzConfig) -> FuzzResult:
         csv_path=csv_path,
         summary_path=summary_path,
     )
+
+
+
+def should_report_progress(config: FuzzConfig, completed_cases: int, now: float, last_progress: float) -> bool:
+    if completed_cases <= 0:
+        return False
+    if config.progress_interval > 0 and completed_cases % config.progress_interval == 0:
+        return True
+    if config.progress_seconds > 0 and now - last_progress >= config.progress_seconds:
+        return True
+    if completed_cases == config.cases:
+        return True
+    return False
+
+
+def report_progress(
+    progress_callback: Callable[[dict], None] | None,
+    config: FuzzConfig,
+    completed_cases: int,
+    sent: int,
+    faults: int,
+    responses: int,
+    coverage_points: int,
+    interrupted: bool,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "campaign": config.campaign,
+            "completed_cases": completed_cases,
+            "requested_cases": config.cases,
+            "sent": sent,
+            "faults": faults,
+            "responses": responses,
+            "coverage_points": coverage_points,
+            "interrupted": interrupted,
+        }
+    )
+def result_fieldnames() -> list[str]:
+    return [
+        "case_id",
+        "timestamp_ms",
+        "identifier",
+        "frame_format",
+        "frame_type",
+        "dlc",
+        "payload_hex",
+        "sent",
+        "accepted",
+        "fault",
+        "state",
+        "reason",
+        "response_count",
+        "response_ids",
+        "response_payloads",
+        "latency_ms",
+        "error",
+        "coverage_count",
+    ]
+
+
+def write_summary(
+    summary_path: Path,
+    config: FuzzConfig,
+    csv_path: Path,
+    sent: int,
+    faults: int,
+    responses: int,
+    completed_cases: int,
+    interrupted: bool,
+    reasons: set[str],
+    coverage: set[str],
+) -> None:
+    denominator = completed_cases or 1
+    summary = {
+        "campaign": config.campaign,
+        "status": "interrupted" if interrupted else "completed",
+        "interrupted": interrupted,
+        "cases": config.cases,
+        "requested_cases": config.cases,
+        "completed_cases": completed_cases,
+        "seed": config.seed,
+        "interface": config.interface,
+        "channel": config.channel,
+        "bitrate": config.bitrate,
+        "fd": config.fd,
+        "sent": sent,
+        "faults": faults,
+        "responses": responses,
+        "send_rate": sent / denominator,
+        "fault_rate": faults / denominator,
+        "response_rate": responses / denominator,
+        "unique_reasons": len(reasons),
+        "coverage_points": len(coverage),
+        "csv_path": str(csv_path),
+    }
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
 def generate_frame(rng: random.Random, case_id: int, current_timestamp_ms: int, config: FuzzConfig) -> CANFrame:
@@ -257,3 +343,5 @@ def sleep_seconds(seconds: float) -> None:
     import time
 
     time.sleep(seconds)
+
+

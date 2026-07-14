@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
 
+from .discovery import list_can_interfaces
 from .models import CANFrame, FrameType
 
 
@@ -18,6 +22,10 @@ class HardwareObservation:
     response_payloads: list[str]
     latency_ms: float
     error: str = ""
+
+
+class CANConnectionError(RuntimeError):
+    pass
 
 
 class CANHardwareAdapter:
@@ -39,13 +47,18 @@ class CANHardwareAdapter:
         self._bus: Any = None
 
     def __enter__(self) -> "CANHardwareAdapter":
+        previous_disable_level = logging.root.manager.disable
         try:
-            import can
+            logging.disable(logging.CRITICAL)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                import can
         except ImportError as exc:
-            raise RuntimeError(
+            raise CANConnectionError(
                 "python-can is required for real CAN device testing. "
                 "Install dependencies with pip install -e . or pip install python-can."
             ) from exc
+        finally:
+            logging.disable(previous_disable_level)
 
         kwargs: dict[str, Any] = {
             "interface": self.interface,
@@ -58,7 +71,18 @@ class CANHardwareAdapter:
         if self.data_bitrate is not None:
             kwargs["data_bitrate"] = self.data_bitrate
 
-        self._bus = can.interface.Bus(**kwargs)
+        try:
+            logging.disable(logging.CRITICAL)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self._bus = can.interface.Bus(**kwargs)
+        except KeyError as exc:
+            raise CANConnectionError(build_unknown_channel_message(self.interface, self.channel)) from exc
+        except can.CanError as exc:
+            raise CANConnectionError(build_can_error_message(self.interface, self.channel, exc)) from exc
+        except OSError as exc:
+            raise CANConnectionError(build_os_error_message(self.interface, self.channel, exc)) from exc
+        finally:
+            logging.disable(previous_disable_level)
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -161,3 +185,51 @@ class CANHardwareAdapter:
             msg = self._bus.recv(timeout=0.0)
             if msg is None:
                 return
+
+
+def build_unknown_channel_message(interface: str, channel: str) -> str:
+    lines = [
+        f"Unknown CAN channel {channel!r} for interface {interface!r}.",
+    ]
+    if interface == "pcan" and channel.startswith("PCAN-"):
+        lines.append("PCAN channel names use underscores, not hyphens. Did you mean PCAN_USBBUS1?")
+    lines.extend(discovery_hint(interface))
+    return "\n".join(lines)
+
+
+def build_can_error_message(interface: str, channel: str, exc: Exception) -> str:
+    lines = [
+        f"Could not open CAN interface {interface!r} channel {channel!r}.",
+        f"Backend error: {exc}",
+    ]
+    if interface == "pcan":
+        lines.append("For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel.")
+    lines.extend(discovery_hint(interface))
+    return "\n".join(lines)
+
+
+def build_os_error_message(interface: str, channel: str, exc: OSError) -> str:
+    lines = [
+        f"Could not open CAN interface {interface!r} channel {channel!r}.",
+        f"OS error: {exc}",
+    ]
+    if interface == "socketcan":
+        lines.append("SocketCAN is normally available on Linux. On Windows, use a backend such as pcan, vector, or slcan.")
+    lines.extend(discovery_hint(interface))
+    return "\n".join(lines)
+
+
+def discovery_hint(interface: str) -> list[str]:
+    lines = ["Run uv run list to see detected CAN interfaces."]
+    try:
+        configs = list_can_interfaces(interfaces=[interface], include_virtual=False, verbose=False)
+    except RuntimeError:
+        return lines
+    if configs:
+        channels = ", ".join(str(config.get("channel", "")) for config in configs)
+        lines.append(f"Detected {interface} channel(s): {channels}")
+    return lines
+
+
+
+

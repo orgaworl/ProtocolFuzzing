@@ -12,6 +12,7 @@ build/
 latex/
 TODO.md
 docs/
+result/
 develop-eggs/
 dist/
 downloads/

@@ -56,3 +56,4 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
         else:
             normalized[key] = str(value)
     return normalized
+
