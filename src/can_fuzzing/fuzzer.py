@@ -64,6 +64,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
     interrupted = False
     reasons: set[str] = set()
     coverage: set[str] = set()
+    last_progress = time.monotonic()
 
     with CANHardwareAdapter(
         interface=config.interface,
@@ -115,11 +116,35 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                 completed_cases += 1
                 fh.flush()
 
+                now = time.monotonic()
+                if should_report_progress(config, completed_cases, now, last_progress):
+                    last_progress = now
+                    report_progress(
+                        progress_callback,
+                        config=config,
+                        completed_cases=completed_cases,
+                        sent=sent,
+                        faults=faults,
+                        responses=responses,
+                        coverage_points=len(coverage),
+                        interrupted=False,
+                    )
+
                 if config.inter_frame_delay_ms > 0:
                     sleep_seconds(config.inter_frame_delay_ms / 1000.0)
         except KeyboardInterrupt:
             interrupted = True
             fh.flush()
+            report_progress(
+                progress_callback,
+                config=config,
+                completed_cases=completed_cases,
+                sent=sent,
+                faults=faults,
+                responses=responses,
+                coverage_points=len(coverage),
+                interrupted=True,
+            )
 
     write_summary(
         summary_path=summary_path,
@@ -343,5 +368,6 @@ def sleep_seconds(seconds: float) -> None:
     import time
 
     time.sleep(seconds)
+
 
 

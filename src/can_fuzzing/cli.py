@@ -10,7 +10,9 @@ from typing import Any
 from . import FuzzConfig, run_fuzzing
 from .adapters import CANConnectionError
 from .discovery import DEFAULT_DISCOVERY_INTERFACES, list_can_interfaces
+from .fdcheck import FDCheckConfig, run_fdcheck
 from .plotting import plot_results
+from .scanner import ScanConfig, run_scan
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     def _get_help_string(self, action: argparse.Action) -> str:
         help_text = action.help or ""
@@ -54,6 +56,23 @@ def list_main() -> None:
     run_list_from_args(args)
 
 
+def fdcheck_main() -> None:
+    parser = make_parser(description="test whether the CAN hardware and target device support CAN FD")
+    add_fdcheck_arguments(parser)
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    args = parser.parse_args()
+    run_fdcheck_from_args(args)
+
+
+
+def scan_main() -> None:
+    parser = make_parser(description="scan devices and message IDs on a real CAN bus")
+    add_scan_arguments(parser)
+    args = parser.parse_args()
+    run_scan_from_args(args)
+
 def legacy_main() -> None:
     parser = make_parser(description="CAN protocol fuzzing framework")
     subparsers = parser.add_subparsers(dest="command")
@@ -73,6 +92,12 @@ def legacy_main() -> None:
     list_parser = subparsers.add_parser("list", help="list available CAN interfaces", formatter_class=HelpFormatter)
     add_list_arguments(list_parser)
 
+    fdcheck_parser = subparsers.add_parser("fdcheck", help="test whether the hardware and target support CAN FD", formatter_class=HelpFormatter)
+    add_fdcheck_arguments(fdcheck_parser)
+
+    scan_parser = subparsers.add_parser("scan", help="scan CAN bus devices and message IDs", formatter_class=HelpFormatter)
+    add_scan_arguments(scan_parser)
+
     args = parser.parse_args()
     if args.command in {"fuzz", "run"}:
         run_fuzz_from_args(args)
@@ -85,6 +110,12 @@ def legacy_main() -> None:
         return
     if args.command == "list":
         run_list_from_args(args)
+        return
+    if args.command == "fdcheck":
+        run_fdcheck_from_args(args)
+        return
+    if args.command == "scan":
+        run_scan_from_args(args)
         return
     parser.print_help()
 
@@ -183,6 +214,141 @@ def run_list_from_args(args: argparse.Namespace) -> None:
     print_interface_table(configs)
 
 
+
+def run_scan_from_args(args: argparse.Namespace) -> None:
+    passive = not args.active_only
+    active = not args.passive_only
+    config = ScanConfig(
+        interface=args.interface,
+        channel=args.channel,
+        bitrate=args.bitrate,
+        output_dir=Path(args.output_dir),
+        campaign=args.campaign,
+        passive_duration=args.passive_duration,
+        active_timeout=args.active_timeout,
+        inter_probe_delay_ms=args.inter_probe_delay_ms,
+        fd=args.fd,
+        data_bitrate=args.data_bitrate,
+        active=active,
+        passive=passive,
+        physical_start=args.physical_start,
+        physical_end=args.physical_end,
+    )
+    print(
+        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
+        f"passive={config.passive} active={config.active}",
+        flush=True,
+    )
+    try:
+        if args.no_progress:
+            summary = run_scan(config)
+        else:
+            summary = run_scan_with_tqdm(config)
+    except CANConnectionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"campaign={summary['campaign']}")
+    print(f"status={summary['status']}")
+    print(f"unique_ids={summary['unique_ids']} total_frames={summary['total_frames_observed']}")
+    print(f"active_probes={summary['active_probes']} active_responses={summary['active_responses']}")
+    print(f"diagnostic_response_ids={','.join(summary['suspected_diagnostic_response_ids']) or 'none'}")
+    print(f"ids_csv={summary['ids_csv_path']}")
+    print(f"active_csv={summary['active_csv_path']}")
+
+
+def run_fdcheck_from_args(args: argparse.Namespace) -> None:
+    config = FDCheckConfig(
+        interface=args.interface,
+        channel=args.channel,
+        bitrate=args.bitrate,
+        data_bitrate=args.data_bitrate,
+        output_dir=Path(args.output_dir),
+        campaign=args.campaign,
+        probe_timeout=args.probe_timeout,
+        probe_delay_ms=args.probe_delay_ms,
+    )
+    print(
+        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} fd=True",
+        flush=True,
+    )
+    try:
+        if args.no_progress:
+            result = run_fdcheck(config)
+        else:
+            result = run_fdcheck_with_tqdm(config)
+    except CANConnectionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"campaign={result.campaign}")
+    print(f"status={'interrupted' if result.interrupted else 'completed'}")
+    print(f"hardware_fd_supported={format_bool(result.hardware_fd_supported)}")
+    print(f"hardware_fd_opened={format_bool(result.hardware_fd_opened)}")
+    print(f"hardware_fd_status={result.hardware_fd_status}")
+    if result.hardware_error:
+        print(f"hardware_error={result.hardware_error}")
+    print(f"target_fd_supported={format_bool(result.target_fd_supported)}")
+    print(f"target_fd_status={result.target_fd_status}")
+    print(f"probe_count={result.probe_count} response_count={result.response_count}")
+    print(f"csv={result.csv_path}")
+    print(f"summary={result.summary_path}")
+
+
+def run_fdcheck_with_tqdm(config: FDCheckConfig):
+    from tqdm import tqdm
+
+    with tqdm(total=len(config.probe_lengths) * 4, unit="probe", desc="fdcheck", dynamic_ncols=True) as progress:
+        last_completed = 0
+
+        def update_progress(snapshot: dict) -> None:
+            nonlocal last_completed
+            completed = int(snapshot["completed"])
+            delta = completed - last_completed
+            if delta > 0:
+                progress.update(delta)
+                last_completed = completed
+            progress.set_postfix(target=snapshot.get("target_fd_supported", False), refresh=False)
+
+        return run_fdcheck(config, progress_callback=update_progress)
+
+
+def run_scan_with_tqdm(config: ScanConfig):
+    from tqdm import tqdm
+
+    passive_bar = None
+    active_bar = None
+    active_total = max(0, (config.physical_end - config.physical_start + 1) * 2 + 2) if config.active else 0
+    try:
+        if config.passive:
+            passive_bar = tqdm(total=config.passive_duration, unit="s", desc="passive", dynamic_ncols=True)
+        if config.active:
+            active_bar = tqdm(total=active_total, unit="probe", desc="active", dynamic_ncols=True)
+        passive_seen = 0.0
+        active_seen = 0
+
+        def update(snapshot: dict) -> None:
+            nonlocal passive_seen, active_seen
+            phase = snapshot.get("phase")
+            if phase == "passive" and passive_bar is not None:
+                elapsed = min(float(snapshot.get("elapsed", 0.0)), config.passive_duration)
+                delta = elapsed - passive_seen
+                if delta > 0:
+                    passive_bar.update(delta)
+                    passive_seen = elapsed
+                passive_bar.set_postfix(ids=snapshot.get("ids", 0), refresh=False)
+            elif phase == "active" and active_bar is not None:
+                elapsed = int(snapshot.get("elapsed", 0))
+                delta = elapsed - active_seen
+                if delta > 0:
+                    active_bar.update(delta)
+                    active_seen = elapsed
+                active_bar.set_postfix(ids=snapshot.get("ids", 0), refresh=False)
+
+        return run_scan(config, progress_callback=update)
+    finally:
+        if passive_bar is not None:
+            passive_bar.close()
+        if active_bar is not None:
+            active_bar.close()
 def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
@@ -231,6 +397,39 @@ def add_list_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--json", action="store_true", default=False, help="print raw discovery results as JSON")
     optional.add_argument("--verbose", action="store_true", default=False, help="show backend discovery warnings")
 
+
+def add_fdcheck_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required arguments")
+    optional = parser.add_argument_group("optional arguments")
+    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
+    optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
+    optional.add_argument("--campaign", default="can_fd_check", help="campaign name used for output files")
+    optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON results")
+    optional.add_argument("--probe-timeout", type=float, default=0.15, help="seconds to wait for responses after each FD probe")
+    optional.add_argument("--probe-delay-ms", type=float, default=20.0, help="delay between FD probes")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+
+
+def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required arguments")
+    optional = parser.add_argument_group("optional arguments")
+    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
+    optional.add_argument("--campaign", default="can_scan", help="campaign name used for output files")
+    optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON scan results")
+    optional.add_argument("--passive-duration", type=float, default=10.0, help="seconds to passively listen before active probes")
+    optional.add_argument("--active-timeout", type=float, default=0.25, help="seconds to collect responses after each active probe")
+    optional.add_argument("--inter-probe-delay-ms", type=float, default=50.0, help="delay between active probes")
+    optional.add_argument("--physical-start", type=parse_int, default=0x7E0, help="first physical diagnostic request ID to probe")
+    optional.add_argument("--physical-end", type=parse_int, default=0x7E7, help="last physical diagnostic request ID to probe")
+    optional.add_argument("--fd", action="store_true", default=False, help="open CAN FD mode")
+    optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
+    optional.add_argument("--passive-only", action="store_true", default=False, help="run passive listening only")
+    optional.add_argument("--active-only", action="store_true", default=False, help="run active probing only")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
 def parse_int(value: str) -> int:
     return int(value, 0)
 
@@ -297,12 +496,14 @@ def format_condition(config: dict[str, Any]) -> str:
             0: "unavailable",
             1: "available",
             2: "occupied",
-            3: "pcanview",
+            3: "occupied by PCAN-View",
         }
         return labels.get(condition, str(condition))
     if condition is None:
         return ""
     return str(condition)
+
+
 
 
 

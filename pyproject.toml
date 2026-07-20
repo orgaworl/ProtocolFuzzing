@@ -18,8 +18,11 @@ fuzz = "can_fuzzing.cli:fuzz_main"
 plot = "can_fuzzing.cli:plot_main"
 clean = "can_fuzzing.cli:clean_main"
 list = "can_fuzzing.cli:list_main"
+fdcheck = "can_fuzzing.cli:fdcheck_main"
+scan = "can_fuzzing.cli:scan_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
 
 

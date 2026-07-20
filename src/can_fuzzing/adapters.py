@@ -28,6 +28,16 @@ class CANConnectionError(RuntimeError):
     pass
 
 
+def quiet_call(func, *args, **kwargs):
+    previous_disable_level = logging.root.manager.disable
+    try:
+        logging.disable(logging.CRITICAL)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return func(*args, **kwargs)
+    finally:
+        logging.disable(previous_disable_level)
+
+
 class CANHardwareAdapter:
     def __init__(
         self,
@@ -72,9 +82,7 @@ class CANHardwareAdapter:
             kwargs["data_bitrate"] = self.data_bitrate
 
         try:
-            logging.disable(logging.CRITICAL)
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                self._bus = can.interface.Bus(**kwargs)
+            self._bus = quiet_call(can.interface.Bus, **kwargs)
         except KeyError as exc:
             raise CANConnectionError(build_unknown_channel_message(self.interface, self.channel)) from exc
         except can.CanError as exc:
@@ -112,7 +120,7 @@ class CANHardwareAdapter:
 
         start = time.perf_counter()
         try:
-            self._bus.send(message)
+            quiet_call(self._bus.send, message)
         except can.CanError as exc:
             latency = (time.perf_counter() - start) * 1000.0
             return HardwareObservation(
@@ -134,7 +142,7 @@ class CANHardwareAdapter:
             if remaining <= 0:
                 break
             try:
-                response = self._bus.recv(timeout=remaining)
+                response = quiet_call(self._bus.recv, timeout=remaining)
             except can.CanError as exc:
                 latency = (time.perf_counter() - start) * 1000.0
                 return HardwareObservation(
@@ -178,11 +186,36 @@ class CANHardwareAdapter:
             latency_ms=latency,
         )
 
+    def send_frame(self, frame: CANFrame) -> None:
+        if self._bus is None:
+            raise RuntimeError("CAN bus is not open")
+        try:
+            import can
+        except ImportError as exc:
+            raise RuntimeError("python-can is required for real CAN device testing") from exc
+        message = can.Message(
+            arbitration_id=frame.identifier,
+            data=frame.data,
+            is_extended_id=frame.frame_format.value == "extended",
+            is_remote_frame=frame.frame_type == FrameType.REMOTE,
+            is_error_frame=frame.frame_type == FrameType.ERROR,
+            is_fd=self.fd,
+            check=True,
+        )
+        quiet_call(self._bus.send, message)
+
+    def receive_message(self, timeout: float):
+        if self._bus is None:
+            raise RuntimeError("CAN bus is not open")
+        return quiet_call(self._bus.recv, timeout=timeout)
+
+    def drain_pending(self) -> None:
+        self._drain_pending()
     def _drain_pending(self) -> None:
         if self._bus is None:
             return
         while True:
-            msg = self._bus.recv(timeout=0.0)
+            msg = quiet_call(self._bus.recv, timeout=0.0)
             if msg is None:
                 return
 
@@ -202,8 +235,7 @@ def build_can_error_message(interface: str, channel: str, exc: Exception) -> str
         f"Could not open CAN interface {interface!r} channel {channel!r}.",
         f"Backend error: {exc}",
     ]
-    if interface == "pcan":
-        lines.append("For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel.")
+    lines.extend(channel_status_hint(interface, channel))
     lines.extend(discovery_hint(interface))
     return "\n".join(lines)
 
@@ -229,6 +261,32 @@ def discovery_hint(interface: str) -> list[str]:
         channels = ", ".join(str(config.get("channel", "")) for config in configs)
         lines.append(f"Detected {interface} channel(s): {channels}")
     return lines
+
+
+def channel_status_hint(interface: str, channel: str) -> list[str]:
+    if interface != "pcan":
+        return []
+    try:
+        configs = list_can_interfaces(interfaces=[interface], include_virtual=False, verbose=False)
+    except RuntimeError:
+        return ["For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel."]
+    for config in configs:
+        if str(config.get("channel", "")) != channel:
+            continue
+        condition = config.get("channel_condition")
+        if condition == 0:
+            return ["The PCAN channel is unavailable."]
+        if condition == 1:
+            return ["The PCAN channel is available, but opening still failed. Check the PCAN driver and channel parameters."]
+        if condition == 2:
+            return ["The PCAN channel is occupied by another client."]
+        if condition == 3:
+            return ["The PCAN channel is occupied by PCAN-View or another PCAN client."]
+        return [f"The PCAN channel reported condition {condition}."]
+    return ["For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel."]
+
+
+
 
 
 
