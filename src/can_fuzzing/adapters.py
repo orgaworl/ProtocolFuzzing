@@ -4,6 +4,7 @@ import contextlib
 import io
 import logging
 import time
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,6 +56,7 @@ class CANHardwareAdapter:
         self.fd = fd
         self.data_bitrate = data_bitrate
         self._bus: Any = None
+        self._io_lock = threading.RLock()
 
     def __enter__(self) -> "CANHardwareAdapter":
         previous_disable_level = logging.root.manager.disable
@@ -108,19 +110,12 @@ class CANHardwareAdapter:
             raise RuntimeError("python-can is required for real CAN device testing") from exc
 
         self._drain_pending()
-        message = can.Message(
-            arbitration_id=frame.identifier,
-            data=frame.data,
-            is_extended_id=frame.frame_format.value == "extended",
-            is_remote_frame=frame.frame_type == FrameType.REMOTE,
-            is_error_frame=frame.frame_type == FrameType.ERROR,
-            is_fd=self.fd,
-            check=True,
-        )
+        message = self._build_message(frame, is_fd=self.fd)
 
         start = time.perf_counter()
         try:
-            quiet_call(self._bus.send, message)
+            with self._io_lock:
+                quiet_call(self._bus.send, message)
         except can.CanError as exc:
             latency = (time.perf_counter() - start) * 1000.0
             return HardwareObservation(
@@ -142,7 +137,8 @@ class CANHardwareAdapter:
             if remaining <= 0:
                 break
             try:
-                response = quiet_call(self._bus.recv, timeout=remaining)
+                with self._io_lock:
+                    response = quiet_call(self._bus.recv, timeout=remaining)
             except can.CanError as exc:
                 latency = (time.perf_counter() - start) * 1000.0
                 return HardwareObservation(
@@ -186,28 +182,22 @@ class CANHardwareAdapter:
             latency_ms=latency,
         )
 
-    def send_frame(self, frame: CANFrame) -> None:
+    def send_frame(self, frame: CANFrame, is_fd: bool | None = None) -> None:
         if self._bus is None:
             raise RuntimeError("CAN bus is not open")
         try:
             import can
         except ImportError as exc:
             raise RuntimeError("python-can is required for real CAN device testing") from exc
-        message = can.Message(
-            arbitration_id=frame.identifier,
-            data=frame.data,
-            is_extended_id=frame.frame_format.value == "extended",
-            is_remote_frame=frame.frame_type == FrameType.REMOTE,
-            is_error_frame=frame.frame_type == FrameType.ERROR,
-            is_fd=self.fd,
-            check=True,
-        )
-        quiet_call(self._bus.send, message)
+        message = self._build_message(frame, is_fd=self.fd if is_fd is None else is_fd)
+        with self._io_lock:
+            quiet_call(self._bus.send, message)
 
     def receive_message(self, timeout: float):
         if self._bus is None:
             raise RuntimeError("CAN bus is not open")
-        return quiet_call(self._bus.recv, timeout=timeout)
+        with self._io_lock:
+            return quiet_call(self._bus.recv, timeout=timeout)
 
     def drain_pending(self) -> None:
         self._drain_pending()
@@ -215,9 +205,25 @@ class CANHardwareAdapter:
         if self._bus is None:
             return
         while True:
-            msg = quiet_call(self._bus.recv, timeout=0.0)
+            with self._io_lock:
+                msg = quiet_call(self._bus.recv, timeout=0.0)
             if msg is None:
                 return
+
+    def _build_message(self, frame: CANFrame, is_fd: bool | None = None):
+        try:
+            import can
+        except ImportError as exc:
+            raise RuntimeError("python-can is required for real CAN device testing") from exc
+        return can.Message(
+            arbitration_id=frame.identifier,
+            data=frame.data,
+            is_extended_id=frame.frame_format.value == "extended",
+            is_remote_frame=frame.frame_type == FrameType.REMOTE,
+            is_error_frame=frame.frame_type == FrameType.ERROR,
+            is_fd=self.fd if is_fd is None else is_fd,
+            check=True,
+        )
 
 
 def build_unknown_channel_message(interface: str, channel: str) -> str:

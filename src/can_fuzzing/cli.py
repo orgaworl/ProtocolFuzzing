@@ -140,6 +140,12 @@ def run_fuzz_from_args(args: argparse.Namespace) -> None:
         extended_probability=args.extended_probability,
         include_remote=args.include_remote,
         include_error=args.include_error,
+        keepalive=args.keepalive,
+        keepalive_id=args.keepalive_id,
+        keepalive_payload=parse_hex_bytes(args.keepalive_payload),
+        keepalive_interval_ms=args.keepalive_interval_ms,
+        keepalive_extended=args.keepalive_format == "extended",
+        keepalive_fd=args.keepalive_fd,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
@@ -148,6 +154,12 @@ def run_fuzz_from_args(args: argparse.Namespace) -> None:
         f"bitrate={config.bitrate} cases={config.cases}",
         flush=True,
     )
+    if config.keepalive:
+        print(
+            f"keepalive=id=0x{config.keepalive_id:x} interval={config.keepalive_interval_ms}ms "
+            f"format={'extended' if config.keepalive_extended else 'standard'} fd={config.keepalive_fd}",
+            flush=True,
+        )
     try:
         if args.no_progress:
             result = run_fuzzing(config)
@@ -160,6 +172,10 @@ def run_fuzz_from_args(args: argparse.Namespace) -> None:
     print(f"status={'interrupted' if result.interrupted else 'completed'}")
     print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
     print(f"coverage_points={result.coverage_points} unique_reasons={result.unique_reasons}")
+    if config.keepalive:
+        print(f"keepalive_sent={result.keepalive_sent} keepalive_errors={result.keepalive_errors}")
+        if result.keepalive_errors:
+            print(f"keepalive_last_error={result.keepalive_last_error}")
     print(f"csv={result.csv_path}")
     print(f"summary={result.summary_path}")
 
@@ -369,6 +385,12 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--extended-probability", type=float, default=0.0, help="probability of generating extended ID frames")
     optional.add_argument("--include-remote", action="store_true", default=False, help="include remote frames in the campaign")
     optional.add_argument("--include-error", action="store_true", default=False, help="include error frames in the campaign")
+    optional.add_argument("--keepalive", action="store_true", default=False, help="send a periodic activation frame in a background thread")
+    optional.add_argument("--keepalive-id", type=parse_int, default=0x7DF, help="arbitration ID for the periodic activation frame")
+    optional.add_argument("--keepalive-payload", default="02 3E 00", help="hex payload for the periodic activation frame")
+    optional.add_argument("--keepalive-interval-ms", type=float, default=500.0, help="delay between activation frames")
+    optional.add_argument("--keepalive-format", choices=["standard", "extended"], default="standard", help="frame format for the activation frame")
+    optional.add_argument("--keepalive-fd", action="store_true", default=False, help="send the activation frame as CAN FD")
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
     optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
@@ -438,6 +460,10 @@ def parse_optional_int(value: str) -> int | None:
     if value.lower() in {"none", "null", ""}:
         return None
     return int(value, 0)
+
+
+def parse_hex_bytes(value: str) -> bytes:
+    return bytes.fromhex(value)
 
 
 def parse_interface_names(value: str) -> list[str]:

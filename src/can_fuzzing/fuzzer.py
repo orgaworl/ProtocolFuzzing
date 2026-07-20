@@ -4,6 +4,7 @@ import csv
 import json
 import random
 import time
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,12 @@ class FuzzConfig:
     extended_probability: float = 0.0
     include_remote: bool = False
     include_error: bool = False
+    keepalive: bool = False
+    keepalive_id: int = 0x7DF
+    keepalive_payload: bytes = b"\x02\x3E\x00"
+    keepalive_interval_ms: float = 500.0
+    keepalive_extended: bool = False
+    keepalive_fd: bool = False
     progress_interval: int = 100
     progress_seconds: float = 1.0
 
@@ -46,6 +53,9 @@ class FuzzResult:
     responses: int
     unique_reasons: int
     coverage_points: int
+    keepalive_sent: int
+    keepalive_errors: int
+    keepalive_last_error: str
     csv_path: Path
     summary_path: Path
 
@@ -65,6 +75,9 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
     reasons: set[str] = set()
     coverage: set[str] = set()
     last_progress = time.monotonic()
+    keepalive_sent = 0
+    keepalive_errors = 0
+    keepalive_last_error = ""
 
     with CANHardwareAdapter(
         interface=config.interface,
@@ -79,6 +92,26 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         fh.flush()
 
         current_timestamp_ms = 0
+        stop_event = threading.Event()
+        keepalive_thread: threading.Thread | None = None
+        keepalive_state = {
+            "sent": 0,
+            "errors": 0,
+            "last_error": "",
+        }
+        if config.keepalive:
+            keepalive_frame = CANFrame(
+                identifier=config.keepalive_id,
+                data=config.keepalive_payload,
+                frame_format=FrameFormat.EXTENDED if config.keepalive_extended else FrameFormat.STANDARD,
+                frame_type=FrameType.DATA,
+            )
+            keepalive_thread = threading.Thread(
+                target=run_keepalive_sender,
+                args=(adapter, keepalive_frame, config.keepalive_fd, config.keepalive_interval_ms, stop_event, keepalive_state),
+                daemon=True,
+            )
+            keepalive_thread.start()
         try:
             for case_id in range(config.cases):
                 frame = generate_frame(rng, case_id, current_timestamp_ms, config)
@@ -145,6 +178,13 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                 coverage_points=len(coverage),
                 interrupted=True,
             )
+        finally:
+            stop_event.set()
+            if keepalive_thread is not None:
+                keepalive_thread.join(timeout=2.0)
+                keepalive_sent = int(keepalive_state.get("sent", 0))
+                keepalive_errors = int(keepalive_state.get("errors", 0))
+                keepalive_last_error = str(keepalive_state.get("last_error", ""))
 
     write_summary(
         summary_path=summary_path,
@@ -157,6 +197,9 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         interrupted=interrupted,
         reasons=reasons,
         coverage=coverage,
+        keepalive_sent=keepalive_sent,
+        keepalive_errors=keepalive_errors,
+        keepalive_last_error=keepalive_last_error,
     )
 
     return FuzzResult(
@@ -169,6 +212,9 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         responses=responses,
         unique_reasons=len(reasons),
         coverage_points=len(coverage),
+        keepalive_sent=keepalive_sent,
+        keepalive_errors=keepalive_errors,
+        keepalive_last_error=keepalive_last_error,
         csv_path=csv_path,
         summary_path=summary_path,
     )
@@ -245,6 +291,9 @@ def write_summary(
     interrupted: bool,
     reasons: set[str],
     coverage: set[str],
+    keepalive_sent: int,
+    keepalive_errors: int,
+    keepalive_last_error: str,
 ) -> None:
     denominator = completed_cases or 1
     summary = {
@@ -259,6 +308,14 @@ def write_summary(
         "channel": config.channel,
         "bitrate": config.bitrate,
         "fd": config.fd,
+        "keepalive": config.keepalive,
+        "keepalive_id": config.keepalive_id,
+        "keepalive_interval_ms": config.keepalive_interval_ms,
+        "keepalive_extended": config.keepalive_extended,
+        "keepalive_fd": config.keepalive_fd,
+        "keepalive_sent": keepalive_sent,
+        "keepalive_errors": keepalive_errors,
+        "keepalive_last_error": keepalive_last_error,
         "sent": sent,
         "faults": faults,
         "responses": responses,
@@ -270,6 +327,27 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+
+def run_keepalive_sender(
+    adapter: CANHardwareAdapter,
+    frame: CANFrame,
+    is_fd: bool,
+    interval_ms: float,
+    stop_event: threading.Event,
+    state: dict[str, object],
+) -> None:
+    delay_seconds = max(0.001, interval_ms / 1000.0)
+    while not stop_event.is_set():
+        try:
+            adapter.send_frame(frame, is_fd=is_fd)
+            state["sent"] = int(state.get("sent", 0)) + 1
+        except Exception as exc:
+            state["errors"] = int(state.get("errors", 0)) + 1
+            state["last_error"] = str(exc)
+            break
+        if stop_event.wait(delay_seconds):
+            break
 
 
 def generate_frame(rng: random.Random, case_id: int, current_timestamp_ms: int, config: FuzzConfig) -> CANFrame:

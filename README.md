@@ -85,5 +85,7 @@ Important hardware options:
 - `--id-min` and `--id-max`: limit the fuzzing arbitration ID range.
 - `--receive-timeout`: response collection window after each transmitted fuzzing frame.
 - `--inter-frame-delay-ms`: delay between generated fuzzing frames.
+- `--keepalive`: send a periodic activation frame in a background thread while fuzzing.
+- `--keepalive-id`, `--keepalive-payload`, `--keepalive-interval-ms`: configure the activation frame.
 - `--passive-duration`: seconds to listen during scan before active probes.
 - `--active-timeout`: response collection window after each active scan probe.
