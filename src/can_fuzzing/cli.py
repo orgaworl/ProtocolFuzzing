@@ -12,7 +12,10 @@ from .adapters import CANConnectionError
 from .discovery import DEFAULT_DISCOVERY_INTERFACES, list_can_interfaces
 from .fdcheck import FDCheckConfig, run_fdcheck
 from .plotting import plot_results
+from .obd_fuzzer import OBDFuzzConfig, run_obd_fuzzing
+from .private_fuzzer import PrivateFuzzConfig, run_private_fuzzing
 from .scanner import ScanConfig, run_scan
+from .uds_fuzzer import UDSFuzzConfig, run_uds_fuzzing
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     def _get_help_string(self, action: argparse.Action) -> str:
         help_text = action.help or ""
@@ -66,6 +69,36 @@ def fdcheck_main() -> None:
     run_fdcheck_from_args(args)
 
 
+def udsfuzz_main() -> None:
+    parser = make_parser(description="run a UDS/ISO-TP fuzzing campaign on a real CAN device")
+    add_udsfuzz_arguments(parser)
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    args = parser.parse_args()
+    run_udsfuzz_from_args(args)
+
+
+def obdfuzz_main() -> None:
+    parser = make_parser(description="run an OBD-II fuzzing campaign on a real CAN device")
+    add_obdfuzz_arguments(parser)
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    args = parser.parse_args()
+    run_obdfuzz_from_args(args)
+
+
+def privatefuzz_main() -> None:
+    parser = make_parser(description="run a configurable private control protocol fuzzing campaign on CAN")
+    add_privatefuzz_arguments(parser)
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    args = parser.parse_args()
+    run_privatefuzz_from_args(args)
+
+
 
 def scan_main() -> None:
     parser = make_parser(description="scan devices and message IDs on a real CAN bus")
@@ -95,6 +128,15 @@ def legacy_main() -> None:
     fdcheck_parser = subparsers.add_parser("fdcheck", help="test whether the hardware and target support CAN FD", formatter_class=HelpFormatter)
     add_fdcheck_arguments(fdcheck_parser)
 
+    udsfuzz_parser = subparsers.add_parser("udsfuzz", help="run a UDS/ISO-TP fuzzing campaign", formatter_class=HelpFormatter)
+    add_udsfuzz_arguments(udsfuzz_parser)
+
+    obdfuzz_parser = subparsers.add_parser("obdfuzz", help="run an OBD-II fuzzing campaign", formatter_class=HelpFormatter)
+    add_obdfuzz_arguments(obdfuzz_parser)
+
+    privatefuzz_parser = subparsers.add_parser("privatefuzz", help="run a configurable private control protocol fuzzing campaign", formatter_class=HelpFormatter)
+    add_privatefuzz_arguments(privatefuzz_parser)
+
     scan_parser = subparsers.add_parser("scan", help="scan CAN bus devices and message IDs", formatter_class=HelpFormatter)
     add_scan_arguments(scan_parser)
 
@@ -113,6 +155,15 @@ def legacy_main() -> None:
         return
     if args.command == "fdcheck":
         run_fdcheck_from_args(args)
+        return
+    if args.command == "udsfuzz":
+        run_udsfuzz_from_args(args)
+        return
+    if args.command == "obdfuzz":
+        run_obdfuzz_from_args(args)
+        return
+    if args.command == "privatefuzz":
+        run_privatefuzz_from_args(args)
         return
     if args.command == "scan":
         run_scan_from_args(args)
@@ -309,6 +360,203 @@ def run_fdcheck_from_args(args: argparse.Namespace) -> None:
     print(f"summary={result.summary_path}")
 
 
+def run_udsfuzz_from_args(args: argparse.Namespace) -> None:
+    config = UDSFuzzConfig(
+        cases=args.cases,
+        seed=args.seed,
+        campaign=args.campaign,
+        output_dir=Path(args.output_dir),
+        interface=args.interface,
+        channel=args.channel,
+        bitrate=args.bitrate,
+        receive_timeout=args.receive_timeout,
+        inter_request_delay_ms=args.inter_request_delay_ms,
+        request_mode=args.request_mode,
+        functional_id=args.functional_id,
+        physical_start=args.physical_start,
+        physical_end=args.physical_end,
+        service_bias=args.service_bias,
+        malformed_rate=args.malformed_rate,
+        progress_interval=args.progress_interval,
+        progress_seconds=args.progress_seconds,
+    )
+    print(
+        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
+        flush=True,
+    )
+    try:
+        if args.no_progress:
+            result = run_uds_fuzzing(config)
+        else:
+            result = run_uds_fuzzing_with_tqdm(config)
+    except CANConnectionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"campaign={result.campaign}")
+    print(f"status={'interrupted' if result.interrupted else 'completed'}")
+    print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
+    print(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses} multi_frame_responses={result.multi_frame_responses}")
+    print(f"unique_services={result.unique_services} unique_nrcs={result.unique_nrcs}")
+    print(f"csv={result.csv_path}")
+    print(f"summary={result.summary_path}")
+
+
+def run_obdfuzz_from_args(args: argparse.Namespace) -> None:
+    config = OBDFuzzConfig(
+        cases=args.cases,
+        seed=args.seed,
+        campaign=args.campaign,
+        output_dir=Path(args.output_dir),
+        interface=args.interface,
+        channel=args.channel,
+        bitrate=args.bitrate,
+        receive_timeout=args.receive_timeout,
+        inter_request_delay_ms=args.inter_request_delay_ms,
+        request_mode=args.request_mode,
+        functional_id=args.functional_id,
+        physical_start=args.physical_start,
+        physical_end=args.physical_end,
+        pid_bias=args.pid_bias,
+        malformed_rate=args.malformed_rate,
+        progress_interval=args.progress_interval,
+        progress_seconds=args.progress_seconds,
+    )
+    print(
+        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
+        flush=True,
+    )
+    try:
+        if args.no_progress:
+            result = run_obd_fuzzing(config)
+        else:
+            result = run_obd_fuzzing_with_tqdm(config)
+    except CANConnectionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"campaign={result.campaign}")
+    print(f"status={'interrupted' if result.interrupted else 'completed'}")
+    print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
+    print(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses}")
+    print(f"unique_modes={result.unique_modes} unique_pids={result.unique_pids}")
+    print(f"csv={result.csv_path}")
+    print(f"summary={result.summary_path}")
+
+
+def run_obd_fuzzing_with_tqdm(config: OBDFuzzConfig):
+    from tqdm import tqdm
+
+    with tqdm(total=config.cases, unit="case", desc="obdfuzz", dynamic_ncols=True) as progress:
+        last_completed = 0
+
+        def update_progress(snapshot: dict) -> None:
+            nonlocal last_completed
+            completed = int(snapshot["completed_cases"])
+            delta = completed - last_completed
+            if delta > 0:
+                progress.update(delta)
+                last_completed = completed
+            progress.set_postfix(
+                sent=snapshot["sent"],
+                responses=snapshot["responses"],
+                positive=snapshot["positive_responses"],
+                negative=snapshot["negative_responses"],
+                refresh=False,
+            )
+
+        return run_obd_fuzzing(config, progress_callback=update_progress)
+
+
+def run_privatefuzz_from_args(args: argparse.Namespace) -> None:
+    config = PrivateFuzzConfig(
+        cases=args.cases,
+        seed=args.seed,
+        campaign=args.campaign,
+        output_dir=Path(args.output_dir),
+        interface=args.interface,
+        channel=args.channel,
+        bitrate=args.bitrate,
+        receive_timeout=args.receive_timeout,
+        inter_request_delay_ms=args.inter_request_delay_ms,
+        target_ids=tuple(parse_int_list(args.target_ids)),
+        opcodes=tuple(parse_int_list(args.opcodes)),
+        structured_rate=args.structured_rate,
+        malformed_rate=args.malformed_rate,
+        min_payload_len=args.min_payload_len,
+        max_payload_len=args.max_payload_len,
+        extended=args.extended,
+        fd=args.fd,
+        data_bitrate=args.data_bitrate,
+        progress_interval=args.progress_interval,
+        progress_seconds=args.progress_seconds,
+    )
+    print(
+        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} targets={len(config.target_ids)} opcodes={len(config.opcodes)}",
+        flush=True,
+    )
+    try:
+        if args.no_progress:
+            result = run_private_fuzzing(config)
+        else:
+            result = run_private_fuzzing_with_tqdm(config)
+    except CANConnectionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"campaign={result.campaign}")
+    print(f"status={'interrupted' if result.interrupted else 'completed'}")
+    print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
+    print(f"unique_targets={result.unique_targets} unique_opcodes={result.unique_opcodes} coverage_points={result.coverage_points}")
+    print(f"csv={result.csv_path}")
+    print(f"summary={result.summary_path}")
+
+
+def run_private_fuzzing_with_tqdm(config: PrivateFuzzConfig):
+    from tqdm import tqdm
+
+    with tqdm(total=config.cases, unit="case", desc="privatefuzz", dynamic_ncols=True) as progress:
+        last_completed = 0
+
+        def update_progress(snapshot: dict) -> None:
+            nonlocal last_completed
+            completed = int(snapshot["completed_cases"])
+            delta = completed - last_completed
+            if delta > 0:
+                progress.update(delta)
+                last_completed = completed
+            progress.set_postfix(
+                sent=snapshot["sent"],
+                faults=snapshot["faults"],
+                responses=snapshot["responses"],
+                coverage=snapshot["coverage_points"],
+                refresh=False,
+            )
+
+        return run_private_fuzzing(config, progress_callback=update_progress)
+
+
+def run_uds_fuzzing_with_tqdm(config: UDSFuzzConfig):
+    from tqdm import tqdm
+
+    with tqdm(total=config.cases, unit="case", desc="udsfuzz", dynamic_ncols=True) as progress:
+        last_completed = 0
+
+        def update_progress(snapshot: dict) -> None:
+            nonlocal last_completed
+            completed = int(snapshot["completed_cases"])
+            delta = completed - last_completed
+            if delta > 0:
+                progress.update(delta)
+                last_completed = completed
+            progress.set_postfix(
+                sent=snapshot["sent"],
+                responses=snapshot["responses"],
+                positive=snapshot["positive_responses"],
+                negative=snapshot["negative_responses"],
+                refresh=False,
+            )
+
+        return run_uds_fuzzing(config, progress_callback=update_progress)
+
+
 def run_fdcheck_with_tqdm(config: FDCheckConfig):
     from tqdm import tqdm
 
@@ -434,6 +682,78 @@ def add_fdcheck_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
 
 
+def add_udsfuzz_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required arguments")
+    optional = parser.add_argument_group("optional arguments")
+    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
+    optional.add_argument("--cases", type=int, default=1000, help="number of diagnostic requests to generate")
+    optional.add_argument("--seed", type=int, default=2024, help="random seed")
+    optional.add_argument("--campaign", default="uds_baseline", help="campaign name used for output files")
+    optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON results")
+    optional.add_argument("--receive-timeout", type=float, default=0.15, help="seconds to collect response frames after each diagnostic request")
+    optional.add_argument("--inter-request-delay-ms", type=float, default=10.0, help="delay between diagnostic requests")
+    optional.add_argument("--request-mode", choices=["functional", "physical", "mixed"], default="mixed", help="request addressing mode")
+    optional.add_argument("--functional-id", type=parse_int, default=0x7DF, help="functional request ID")
+    optional.add_argument("--physical-start", type=parse_int, default=0x7E0, help="first physical request ID to probe")
+    optional.add_argument("--physical-end", type=parse_int, default=0x7E7, help="last physical request ID to probe")
+    optional.add_argument("--service-bias", type=float, default=0.85, help="probability of generating a structured UDS service instead of a raw random request")
+    optional.add_argument("--malformed-rate", type=float, default=0.15, help="probability of generating a malformed diagnostic request")
+    optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
+    optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+
+
+def add_obdfuzz_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required arguments")
+    optional = parser.add_argument_group("optional arguments")
+    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
+    optional.add_argument("--cases", type=int, default=1000, help="number of OBD requests to generate")
+    optional.add_argument("--seed", type=int, default=2025, help="random seed")
+    optional.add_argument("--campaign", default="obd_baseline", help="campaign name used for output files")
+    optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON results")
+    optional.add_argument("--receive-timeout", type=float, default=0.15, help="seconds to collect response frames after each OBD request")
+    optional.add_argument("--inter-request-delay-ms", type=float, default=20.0, help="delay between OBD requests")
+    optional.add_argument("--request-mode", choices=["functional", "physical", "mixed"], default="functional", help="request addressing mode")
+    optional.add_argument("--functional-id", type=parse_int, default=0x7DF, help="OBD functional request ID")
+    optional.add_argument("--physical-start", type=parse_int, default=0x7E0, help="first physical request ID to probe")
+    optional.add_argument("--physical-end", type=parse_int, default=0x7E7, help="last physical request ID to probe")
+    optional.add_argument("--pid-bias", type=float, default=0.8, help="probability of choosing a common OBD PID")
+    optional.add_argument("--malformed-rate", type=float, default=0.1, help="probability of generating a malformed OBD request")
+    optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
+    optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+
+
+def add_privatefuzz_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required arguments")
+    optional = parser.add_argument_group("optional arguments")
+    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
+    optional.add_argument("--cases", type=int, default=1000, help="number of private control frames to generate")
+    optional.add_argument("--seed", type=int, default=2026, help="random seed")
+    optional.add_argument("--campaign", default="private_control_baseline", help="campaign name used for output files")
+    optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON results")
+    optional.add_argument("--receive-timeout", type=float, default=0.05, help="seconds to collect response frames after each private control frame")
+    optional.add_argument("--inter-request-delay-ms", type=float, default=10.0, help="delay between private control frames")
+    optional.add_argument("--target-ids", default="0x100,0x101,0x200,0x201,0x300,0x301", help="comma separated target arbitration IDs")
+    optional.add_argument("--opcodes", default="0x00,0x01,0x02,0x03,0x10,0x11,0x20,0x21,0x7f,0x80,0xfe,0xff", help="comma separated private control opcodes")
+    optional.add_argument("--structured-rate", type=float, default=0.7, help="probability of generating structured private control payloads")
+    optional.add_argument("--malformed-rate", type=float, default=0.15, help="probability of generating malformed private control payloads")
+    optional.add_argument("--min-payload-len", type=int, default=1, help="minimum payload length")
+    optional.add_argument("--max-payload-len", type=int, default=8, help="maximum payload length")
+    optional.add_argument("--extended", action="store_true", default=False, help="use extended CAN identifiers")
+    optional.add_argument("--fd", action="store_true", default=False, help="send private control frames as CAN FD")
+    optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
+    optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
+    optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+
+
 def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
@@ -460,6 +780,13 @@ def parse_optional_int(value: str) -> int | None:
     if value.lower() in {"none", "null", ""}:
         return None
     return int(value, 0)
+
+
+def parse_int_list(value: str) -> list[int]:
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    if not items:
+        raise argparse.ArgumentTypeError("at least one integer value is required")
+    return [parse_int(item) for item in items]
 
 
 def parse_hex_bytes(value: str) -> bytes:

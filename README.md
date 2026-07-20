@@ -7,6 +7,9 @@ This repository contains a CAN protocol fuzzing framework for real connected CAN
 The command line interfaces are declared in `pyproject.toml` under `[project.scripts]`:
 
 - `fuzz`: run a CAN fuzzing campaign against a real CAN device.
+- `udsfuzz`: run a UDS / ISO-TP fuzzing campaign on top of CAN.
+- `obdfuzz`: run an OBD-II fuzzing campaign on top of CAN.
+- `privatefuzz`: run a configurable private control protocol fuzzing campaign on top of CAN.
 - `scan`: passively listen and actively probe a CAN bus for IDs and diagnostic responders.
 - `fdcheck`: test whether the CAN adapter and target device support CAN FD.
 - `plot`: generate PDF plots from campaign results.
@@ -17,6 +20,24 @@ Run a fuzzing campaign against a real CAN interface:
 
 ```bash
 uv run fuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
+```
+
+Run an upper-layer UDS fuzzing campaign:
+
+```bash
+uv run udsfuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
+```
+
+Run an OBD-II fuzzing campaign:
+
+```bash
+uv run obdfuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
+```
+
+Run a configurable private control protocol fuzzing campaign:
+
+```bash
+uv run privatefuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000 --target-ids 0x100,0x101 --opcodes 0x01,0x02,0x10
 ```
 
 Scan the CAN bus. By default, this does both passive listening and active diagnostic probing:
@@ -87,5 +108,8 @@ Important hardware options:
 - `--inter-frame-delay-ms`: delay between generated fuzzing frames.
 - `--keepalive`: send a periodic activation frame in a background thread while fuzzing.
 - `--keepalive-id`, `--keepalive-payload`, `--keepalive-interval-ms`: configure the activation frame.
+- `udsfuzz` targets UDS / ISO-TP requests and keeps the CAN frame layer separate from the lower-level `fuzz` command.
+- `obdfuzz` targets OBD-II modes and PIDs over CAN and is separate from both `fuzz` and `udsfuzz`.
+- `privatefuzz` targets configurable private control IDs and opcodes over CAN and records target, opcode, payload strategy, and responses.
 - `--passive-duration`: seconds to listen during scan before active probes.
 - `--active-timeout`: response collection window after each active scan probe.
