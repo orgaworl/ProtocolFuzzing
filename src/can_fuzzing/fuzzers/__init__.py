@@ -1,17 +1,7 @@
-from .fuzzers import (
-    FuzzConfig,
-    FuzzResult,
-    OBDFuzzConfig,
-    OBDFuzzResult,
-    PrivateFuzzConfig,
-    PrivateFuzzResult,
-    UDSFuzzConfig,
-    UDSFuzzResult,
-    run_fuzzing,
-    run_obd_fuzzing,
-    run_private_fuzzing,
-    run_uds_fuzzing,
-)
+from .can import FuzzConfig, FuzzResult, run_fuzzing
+from .obd import OBDFuzzConfig, OBDFuzzResult, run_obd_fuzzing
+from .private_control import PrivateFuzzConfig, PrivateFuzzResult, run_private_fuzzing
+from .uds import UDSFuzzConfig, UDSFuzzResult, run_uds_fuzzing
 
 __all__ = [
     "FuzzConfig",

@@ -4,14 +4,26 @@ import csv
 import json
 import random
 import time
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .adapters import CANHardwareAdapter
-from .can_fuzzing import classify_coverage, generate_frame
-from .models import CANFrame, FrameFormat, FrameType
+from ..adapters import CANHardwareAdapter
+from ..common.keepalive import KeepaliveConfig, KeepaliveWorker
+from ..models import CANFrame, FrameFormat, FrameType
+
+DIAGNOSTIC_IDS = [0x7DF, 0x7E0, 0x7E1, 0x7E2, 0x7E3, 0x7E4, 0x7E5, 0x7E6, 0x7E7]
+
+
+class CANFuzzingStrategyConfig:
+    inter_frame_delay_ms: float
+    fd: bool
+    id_min: int
+    id_max: int
+    diagnostic_bias: float
+    extended_probability: float
+    include_remote: bool
+    include_error: bool
 
 
 @dataclass(frozen=True)
@@ -76,9 +88,6 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
     reasons: set[str] = set()
     coverage: set[str] = set()
     last_progress = time.monotonic()
-    keepalive_sent = 0
-    keepalive_errors = 0
-    keepalive_last_error = ""
 
     with CANHardwareAdapter(
         interface=config.interface,
@@ -92,28 +101,20 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         writer.writeheader()
         fh.flush()
 
-        current_timestamp_ms = 0
-        stop_event = threading.Event()
-        keepalive_thread: threading.Thread | None = None
-        keepalive_state = {
-            "sent": 0,
-            "errors": 0,
-            "last_error": "",
-        }
-        if config.keepalive:
-            keepalive_frame = CANFrame(
-                identifier=config.keepalive_id,
-                data=config.keepalive_payload,
-                frame_format=FrameFormat.EXTENDED if config.keepalive_extended else FrameFormat.STANDARD,
-                frame_type=FrameType.DATA,
-            )
-            keepalive_thread = threading.Thread(
-                target=run_keepalive_sender,
-                args=(adapter, keepalive_frame, config.keepalive_fd, config.keepalive_interval_ms, stop_event, keepalive_state),
-                daemon=True,
-            )
-            keepalive_thread.start()
+        keepalive = KeepaliveWorker(
+            adapter,
+            KeepaliveConfig(
+                enabled=config.keepalive,
+                arbitration_id=config.keepalive_id,
+                payload=config.keepalive_payload,
+                interval_ms=config.keepalive_interval_ms,
+                extended=config.keepalive_extended,
+                fd=config.keepalive_fd,
+            ),
+        )
+        keepalive.start()
         try:
+            current_timestamp_ms = 0
             for case_id in range(config.cases):
                 frame = generate_frame(rng, case_id, current_timestamp_ms, config)
                 current_timestamp_ms = frame.timestamp_ms
@@ -165,7 +166,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                     )
 
                 if config.inter_frame_delay_ms > 0:
-                    sleep_seconds(config.inter_frame_delay_ms / 1000.0)
+                    time.sleep(config.inter_frame_delay_ms / 1000.0)
         except KeyboardInterrupt:
             interrupted = True
             fh.flush()
@@ -180,12 +181,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                 interrupted=True,
             )
         finally:
-            stop_event.set()
-            if keepalive_thread is not None:
-                keepalive_thread.join(timeout=2.0)
-                keepalive_sent = int(keepalive_state.get("sent", 0))
-                keepalive_errors = int(keepalive_state.get("errors", 0))
-                keepalive_last_error = str(keepalive_state.get("last_error", ""))
+            keepalive_stats = keepalive.stop()
 
     write_summary(
         summary_path=summary_path,
@@ -198,9 +194,9 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         interrupted=interrupted,
         reasons=reasons,
         coverage=coverage,
-        keepalive_sent=keepalive_sent,
-        keepalive_errors=keepalive_errors,
-        keepalive_last_error=keepalive_last_error,
+        keepalive_sent=keepalive_stats.sent,
+        keepalive_errors=keepalive_stats.errors,
+        keepalive_last_error=keepalive_stats.last_error,
     )
 
     return FuzzResult(
@@ -213,51 +209,108 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         responses=responses,
         unique_reasons=len(reasons),
         coverage_points=len(coverage),
-        keepalive_sent=keepalive_sent,
-        keepalive_errors=keepalive_errors,
-        keepalive_last_error=keepalive_last_error,
+        keepalive_sent=keepalive_stats.sent,
+        keepalive_errors=keepalive_stats.errors,
+        keepalive_last_error=keepalive_stats.last_error,
         csv_path=csv_path,
         summary_path=summary_path,
     )
 
 
+def generate_frame(rng: random.Random, case_id: int, current_timestamp_ms: int, config: CANFuzzingStrategyConfig) -> CANFrame:
+    frame_format = choose_frame_format(rng, config)
+    frame_type = choose_frame_type(rng, config)
+    identifier = choose_identifier(rng, frame_format, config)
+    data = choose_payload(rng, identifier, config)
+    timestamp_ms = current_timestamp_ms + max(1, int(config.inter_frame_delay_ms))
 
-def should_report_progress(config: FuzzConfig, completed_cases: int, now: float, last_progress: float) -> bool:
-    if completed_cases <= 0:
-        return False
-    if config.progress_interval > 0 and completed_cases % config.progress_interval == 0:
-        return True
-    if config.progress_seconds > 0 and now - last_progress >= config.progress_seconds:
-        return True
-    if completed_cases == config.cases:
-        return True
-    return False
-
-
-def report_progress(
-    progress_callback: Callable[[dict], None] | None,
-    config: FuzzConfig,
-    completed_cases: int,
-    sent: int,
-    faults: int,
-    responses: int,
-    coverage_points: int,
-    interrupted: bool,
-) -> None:
-    if progress_callback is None:
-        return
-    progress_callback(
-        {
-            "campaign": config.campaign,
-            "completed_cases": completed_cases,
-            "requested_cases": config.cases,
-            "sent": sent,
-            "faults": faults,
-            "responses": responses,
-            "coverage_points": coverage_points,
-            "interrupted": interrupted,
-        }
+    return CANFrame(
+        identifier=identifier,
+        data=data,
+        frame_format=frame_format,
+        frame_type=frame_type,
+        timestamp_ms=timestamp_ms,
     )
+
+
+def choose_frame_format(rng: random.Random, config: CANFuzzingStrategyConfig) -> FrameFormat:
+    if rng.random() < config.extended_probability:
+        return FrameFormat.EXTENDED
+    return FrameFormat.STANDARD
+
+
+def choose_frame_type(rng: random.Random, config: CANFuzzingStrategyConfig) -> FrameType:
+    choices = [FrameType.DATA]
+    weights = [1.0]
+    if config.include_remote:
+        choices.append(FrameType.REMOTE)
+        weights.append(0.05)
+    if config.include_error:
+        choices.append(FrameType.ERROR)
+        weights.append(0.02)
+    return rng.choices(choices, weights=weights, k=1)[0]
+
+
+def choose_identifier(rng: random.Random, frame_format: FrameFormat, config: CANFuzzingStrategyConfig) -> int:
+    upper_limit = 0x7FF if frame_format == FrameFormat.STANDARD else 0x1FFFFFFF
+    id_min = max(0, min(config.id_min, upper_limit))
+    id_max = max(id_min, min(config.id_max, upper_limit))
+    diagnostic_ids = [value for value in DIAGNOSTIC_IDS if id_min <= value <= id_max]
+    if diagnostic_ids and rng.random() < config.diagnostic_bias:
+        return rng.choice(diagnostic_ids)
+    return rng.randint(id_min, id_max)
+
+
+def choose_payload(rng: random.Random, identifier: int, config: CANFuzzingStrategyConfig) -> bytes:
+    if identifier in DIAGNOSTIC_IDS and rng.random() < 0.75:
+        templates = [
+            [0x02, 0x10, 0x01],
+            [0x02, 0x10, 0x03],
+            [0x02, 0x27, 0x01],
+            [0x04, 0x27, 0x02, 0x12, 0x34],
+            [0x03, 0x22, 0xF1, 0x90],
+            [0x04, 0x31, 0x01, 0xFF, 0x00],
+            [0x01, 0x3E],
+        ]
+        data = rng.choice(templates)
+        return bytes(pad_classic_payload(data, rng))
+
+    max_len = 64 if config.fd else 8
+    interesting_lengths = [0, 1, 2, 3, 4, 7, 8]
+    if config.fd:
+        interesting_lengths.extend([12, 16, 32, 48, 64])
+    length = rng.choice([value for value in interesting_lengths if value <= max_len])
+    return bytes(rng.randrange(256) for _ in range(length))
+
+
+def pad_classic_payload(data: list[int], rng: random.Random) -> list[int]:
+    data = data[:8]
+    if len(data) < 8 and rng.random() < 0.7:
+        data = data + [0x00] * (8 - len(data))
+    return data
+
+
+def classify_coverage(frame: CANFrame, observation) -> set[str]:
+    points = {
+        f"tx_id_{frame.identifier:x}",
+        f"format_{frame.frame_format.value}",
+        f"type_{frame.frame_type.value}",
+        f"reason_{observation.reason}",
+    }
+    if frame.data:
+        if frame.data[0] <= 0x07 and len(frame.data) > 1:
+            points.add(f"service_{frame.data[1]:02x}")
+        else:
+            points.add(f"byte0_{frame.data[0]:02x}")
+    for response_id in observation.response_ids:
+        points.add(f"rx_id_{response_id:x}")
+    return points
+
+
+def encode_int_list(values: list[int]) -> str:
+    return ";".join(f"0x{value:x}" for value in values)
+
+
 def result_fieldnames() -> list[str]:
     return [
         "case_id",
@@ -330,35 +383,43 @@ def write_summary(
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
-def run_keepalive_sender(
-    adapter: CANHardwareAdapter,
-    frame: CANFrame,
-    is_fd: bool,
-    interval_ms: float,
-    stop_event: threading.Event,
-    state: dict[str, object],
+def should_report_progress(config: FuzzConfig, completed_cases: int, now: float, last_progress: float) -> bool:
+    if completed_cases <= 0:
+        return False
+    if config.progress_interval > 0 and completed_cases % config.progress_interval == 0:
+        return True
+    if config.progress_seconds > 0 and now - last_progress >= config.progress_seconds:
+        return True
+    if completed_cases == config.cases:
+        return True
+    return False
+
+
+def report_progress(
+    progress_callback: Callable[[dict], None] | None,
+    config: FuzzConfig,
+    completed_cases: int,
+    sent: int,
+    faults: int,
+    responses: int,
+    coverage_points: int,
+    interrupted: bool,
 ) -> None:
-    delay_seconds = max(0.001, interval_ms / 1000.0)
-    while not stop_event.is_set():
-        try:
-            adapter.send_frame(frame, is_fd=is_fd)
-            state["sent"] = int(state.get("sent", 0)) + 1
-        except Exception as exc:
-            state["errors"] = int(state.get("errors", 0)) + 1
-            state["last_error"] = str(exc)
-            break
-        if stop_event.wait(delay_seconds):
-            break
-
-
-def encode_int_list(values: list[int]) -> str:
-    return ";".join(f"0x{value:x}" for value in values)
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "campaign": config.campaign,
+            "completed_cases": completed_cases,
+            "requested_cases": config.cases,
+            "sent": sent,
+            "faults": faults,
+            "responses": responses,
+            "coverage_points": coverage_points,
+            "interrupted": interrupted,
+        }
+    )
 
 
 def sleep_seconds(seconds: float) -> None:
-    import time
-
     time.sleep(seconds)
-
-
-

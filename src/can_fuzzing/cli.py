@@ -7,15 +7,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import FuzzConfig, run_fuzzing
+from .fuzzers.can import FuzzConfig, FuzzResult, run_fuzzing
 from .adapters import CANConnectionError
 from .discovery import DEFAULT_DISCOVERY_INTERFACES, list_can_interfaces
 from .fdcheck import FDCheckConfig, run_fdcheck
 from .plotting import plot_results
-from .obd_fuzzer import OBDFuzzConfig, run_obd_fuzzing
-from .private_fuzzer import PrivateFuzzConfig, run_private_fuzzing
+from .common.keepalive import KeepaliveConfig, KeepaliveWorker
+from .fuzzers.obd import OBDFuzzConfig, run_obd_fuzzing
+from .fuzzers.private_control import PrivateFuzzConfig, run_private_fuzzing
 from .scanner import ScanConfig, run_scan
-from .uds_fuzzer import UDSFuzzConfig, run_uds_fuzzing
+from .fuzzers.uds import UDSFuzzConfig, run_uds_fuzzing
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     def _get_help_string(self, action: argparse.Action) -> str:
         help_text = action.help or ""

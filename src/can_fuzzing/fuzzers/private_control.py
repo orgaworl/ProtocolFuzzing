@@ -8,8 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .adapters import CANHardwareAdapter
-from .models import CANFrame, FrameFormat, FrameType
+from ..adapters import CANHardwareAdapter
+from ..models import CANFrame, FrameFormat, FrameType
 
 
 DEFAULT_OPCODES = (0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x7F, 0x80, 0xFE, 0xFF)
