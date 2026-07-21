@@ -4,6 +4,7 @@ import argparse
 import json
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -30,34 +31,128 @@ class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
 
 def make_parser(description: str) -> argparse.ArgumentParser:
     return argparse.ArgumentParser(description=description, formatter_class=HelpFormatter)
+
+
+def parse_args_with_config(parser: argparse.ArgumentParser, section: str) -> argparse.Namespace:
+    config_path = extract_config_path(sys.argv[1:])
+    if config_path is not None:
+        defaults = load_parser_defaults_from_config(parser, config_path, section)
+        parser.set_defaults(**defaults)
+        relax_configured_required_args(parser, defaults)
+    args = parser.parse_args()
+    validate_required_args(parser, args)
+    return args
+
+
+def extract_config_path(argv: list[str]) -> Path | None:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("-c", "--config")
+    known, _ = config_parser.parse_known_args(argv)
+    if known.config is None:
+        return None
+    return Path(known.config)
+
+
+def load_parser_defaults_from_config(parser: argparse.ArgumentParser, path: Path, section: str) -> dict[str, Any]:
+    try:
+        with path.open("rb") as fh:
+            raw_config = tomllib.load(fh)
+    except OSError as exc:
+        parser.error(f"could not read config file {path}: {exc}")
+    except tomllib.TOMLDecodeError as exc:
+        parser.error(f"could not parse config file {path}: {exc}")
+
+    config = merge_config_sections(raw_config, section)
+    action_map = config_action_map(parser)
+    unknown = sorted(key for key in config if key not in action_map)
+    if unknown:
+        parser.error(f"unknown config option(s) for {section}: {', '.join(unknown)}")
+    return {key: convert_config_value(action_map[key], value) for key, value in config.items()}
+
+
+def merge_config_sections(raw_config: dict[str, Any], section: str) -> dict[str, Any]:
+    merged = {key: value for key, value in raw_config.items() if not isinstance(value, dict)}
+    section_config = raw_config.get(section, {})
+    if isinstance(section_config, dict):
+        merged.update(section_config)
+    return {normalize_config_key(key): value for key, value in merged.items()}
+
+
+def normalize_config_key(key: str) -> str:
+    return key.replace("-", "_")
+
+
+def config_action_map(parser: argparse.ArgumentParser) -> dict[str, argparse.Action]:
+    result: dict[str, argparse.Action] = {}
+    for action in parser._actions:
+        if action.dest in {"help", argparse.SUPPRESS}:
+            continue
+        result[action.dest] = action
+    return result
+
+
+def convert_config_value(action: argparse.Action, value: Any) -> Any:
+    if isinstance(action, argparse._StoreTrueAction):
+        return bool(value)
+    if isinstance(action, argparse._StoreFalseAction):
+        return not bool(value)
+    if action.dest in {"interfaces", "target_ids", "opcodes"} and isinstance(value, list):
+        return ",".join(str(item) for item in value)
+    if action.type is None or value is None:
+        return value
+    if isinstance(value, str):
+        return action.type(value)
+    return value
+
+
+def validate_required_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    missing = []
+    for name in ("interface", "channel"):
+        value = getattr(args, name, None)
+        if value is None or value == "" or value == []:
+            missing.append(f"--{name.replace('_', '-')}" )
+    if missing:
+        parser.error("missing required argument(s): " + ", ".join(missing))
+
+
+def relax_configured_required_args(parser: argparse.ArgumentParser, defaults: dict[str, Any]) -> None:
+    for action in parser._actions:
+        if action.required and action.dest in defaults:
+            action.required = False
+
+
+def add_config_argument(optional: argparse._ArgumentGroup) -> None:
+    optional.add_argument("-c", "--config", default=None, help="TOML config file; command line options override config values")
+
+
 def fuzz_main() -> None:
     parser = make_parser(description="run a CAN fuzzing campaign on a real CAN device")
     add_fuzz_arguments(parser)
     if len(sys.argv) == 1:
         parser.print_help()
         return
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "fuzz")
     run_fuzz_from_args(args)
 
 
 def plot_main() -> None:
     parser = make_parser(description="generate PDF plots from CAN fuzzing result files")
     add_plot_arguments(parser)
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "plot")
     run_plot_from_args(args)
 
 
 def clean_main() -> None:
     parser = make_parser(description="remove generated files from result and plot")
     add_clean_arguments(parser)
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "clean")
     run_clean_from_args(args)
 
 
 def list_main() -> None:
     parser = make_parser(description="list available CAN interfaces detected by python-can")
     add_list_arguments(parser)
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "list")
     run_list_from_args(args)
 
 
@@ -67,7 +162,7 @@ def fdcheck_main() -> None:
     if len(sys.argv) == 1:
         parser.print_help()
         return
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "fdcheck")
     run_fdcheck_from_args(args)
 
 
@@ -77,7 +172,7 @@ def udsfuzz_main() -> None:
     if len(sys.argv) == 1:
         parser.print_help()
         return
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "udsfuzz")
     run_udsfuzz_from_args(args)
 
 
@@ -87,7 +182,7 @@ def obdfuzz_main() -> None:
     if len(sys.argv) == 1:
         parser.print_help()
         return
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "obdfuzz")
     run_obdfuzz_from_args(args)
 
 
@@ -97,7 +192,7 @@ def privatefuzz_main() -> None:
     if len(sys.argv) == 1:
         parser.print_help()
         return
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "privatefuzz")
     run_privatefuzz_from_args(args)
 
 
@@ -105,7 +200,7 @@ def privatefuzz_main() -> None:
 def scan_main() -> None:
     parser = make_parser(description="scan devices and message IDs on a real CAN bus")
     add_scan_arguments(parser)
-    args = parser.parse_args()
+    args = parse_args_with_config(parser, "scan")
     run_scan_from_args(args)
 
 def legacy_main() -> None:
@@ -171,6 +266,32 @@ def legacy_main() -> None:
         run_scan_from_args(args)
         return
     parser.print_help()
+
+
+def parse_legacy_args_with_config(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("command", nargs="?")
+    pre_parser.add_argument("-c", "--config")
+    known, _ = pre_parser.parse_known_args()
+    section = "fuzz" if known.command == "run" else known.command
+    if known.config and section:
+        subparser = get_legacy_subparser(parser, known.command)
+        if subparser is not None:
+            defaults = load_parser_defaults_from_config(subparser, Path(known.config), section)
+            subparser.set_defaults(**defaults)
+            relax_configured_required_args(subparser, defaults)
+    args = parser.parse_args()
+    validate_required_args(parser, args)
+    return args
+
+
+def get_legacy_subparser(parser: argparse.ArgumentParser, command: str | None) -> argparse.ArgumentParser | None:
+    if command is None:
+        return None
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices.get(command)
+    return None
 
 
 
@@ -628,8 +749,9 @@ def run_scan_with_tqdm(config: ScanConfig):
 def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
-    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
-    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    add_config_argument(optional)
+    required.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
     optional.add_argument("--cases", type=int, default=1000, help="number of generated CAN frames")
     optional.add_argument("--seed", type=int, default=1337, help="random seed")
@@ -658,18 +780,21 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
 
 def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
     optional = parser.add_argument_group("optional arguments")
+    add_config_argument(optional)
     optional.add_argument("--input", default="result/can_baseline_cases.csv", help="input CSV result file")
     optional.add_argument("--output-dir", default="plot", help="directory for generated PDF figures")
 
 
 def add_clean_arguments(parser: argparse.ArgumentParser) -> None:
     optional = parser.add_argument_group("optional arguments")
+    add_config_argument(optional)
     optional.add_argument("--result-dir", default="result", help="result directory to clean")
     optional.add_argument("--plot-dir", default="plot", help="plot directory to clean")
 
 
 def add_list_arguments(parser: argparse.ArgumentParser) -> None:
     optional = parser.add_argument_group("optional arguments")
+    add_config_argument(optional)
     optional.add_argument(
         "--interfaces",
         default=",".join(DEFAULT_DISCOVERY_INTERFACES),
@@ -683,8 +808,9 @@ def add_list_arguments(parser: argparse.ArgumentParser) -> None:
 def add_fdcheck_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
-    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
-    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    add_config_argument(optional)
+    required.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
     optional.add_argument("--data-bitrate", type=parse_optional_int, default=2000000, help="CAN FD data-phase bitrate")
     optional.add_argument("--fd-clock", type=int, default=80000000, help="CAN FD controller clock in Hz")
@@ -700,8 +826,9 @@ def add_fdcheck_arguments(parser: argparse.ArgumentParser) -> None:
 def add_udsfuzz_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
-    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
-    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    add_config_argument(optional)
+    required.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
     optional.add_argument("--cases", type=int, default=1000, help="number of diagnostic requests to generate")
     optional.add_argument("--seed", type=int, default=2024, help="random seed")
@@ -723,8 +850,9 @@ def add_udsfuzz_arguments(parser: argparse.ArgumentParser) -> None:
 def add_obdfuzz_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
-    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
-    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    add_config_argument(optional)
+    required.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
     optional.add_argument("--cases", type=int, default=1000, help="number of OBD requests to generate")
     optional.add_argument("--seed", type=int, default=2025, help="random seed")
@@ -746,8 +874,9 @@ def add_obdfuzz_arguments(parser: argparse.ArgumentParser) -> None:
 def add_privatefuzz_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
-    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
-    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    add_config_argument(optional)
+    required.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
     optional.add_argument("--cases", type=int, default=1000, help="number of private control frames to generate")
     optional.add_argument("--seed", type=int, default=2026, help="random seed")
@@ -772,8 +901,9 @@ def add_privatefuzz_arguments(parser: argparse.ArgumentParser) -> None:
 def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
-    required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
-    required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
+    add_config_argument(optional)
+    required.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan")
+    required.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
     optional.add_argument("--campaign", default="can_scan", help="campaign name used for output files")
     optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON scan results")
@@ -809,7 +939,9 @@ def parse_hex_bytes(value: str) -> bytes:
 
 
 def parse_interface_names(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def clean_directory(path: Path) -> None:
