@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..adapters import CANHardwareAdapter
+from ..common.fuzzing_utils import report_progress, should_report_progress
 from ..models import CANFrame, FrameFormat, FrameType
 
 
@@ -143,8 +144,9 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[
                     last_progress = now
                     report_progress(
                         progress_callback,
-                        config=config,
+                        campaign=config.campaign,
                         completed_cases=completed_cases,
+                        requested_cases=config.cases,
                         sent=sent,
                         faults=faults,
                         responses=responses,
@@ -159,8 +161,9 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[
             fh.flush()
             report_progress(
                 progress_callback,
-                config=config,
+                campaign=config.campaign,
                 completed_cases=completed_cases,
+                requested_cases=config.cases,
                 sent=sent,
                 faults=faults,
                 responses=responses,
@@ -344,40 +347,3 @@ def write_summary(
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
-
-def should_report_progress(config: PrivateFuzzConfig, completed_cases: int, now: float, last_progress: float) -> bool:
-    if completed_cases <= 0:
-        return False
-    if config.progress_interval > 0 and completed_cases % config.progress_interval == 0:
-        return True
-    if config.progress_seconds > 0 and now - last_progress >= config.progress_seconds:
-        return True
-    if completed_cases == config.cases:
-        return True
-    return False
-
-
-def report_progress(
-    progress_callback: Callable[[dict], None] | None,
-    config: PrivateFuzzConfig,
-    completed_cases: int,
-    sent: int,
-    faults: int,
-    responses: int,
-    coverage_points: int,
-    interrupted: bool,
-) -> None:
-    if progress_callback is None:
-        return
-    progress_callback(
-        {
-            "campaign": config.campaign,
-            "completed_cases": completed_cases,
-            "requested_cases": config.cases,
-            "sent": sent,
-            "faults": faults,
-            "responses": responses,
-            "coverage_points": coverage_points,
-            "interrupted": interrupted,
-        }
-    )
