@@ -16,41 +16,8 @@ from ..common.fuzzing_utils import (
     report_progress,
     should_report_progress,
 )
+from ..common.protocol_dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
 from ..models import CANFrame, FrameFormat, FrameType
-
-
-OBD_MODE_NAMES = {
-    0x01: "current_powertrain_data",
-    0x02: "freeze_frame_data",
-    0x03: "stored_dtcs",
-    0x04: "clear_dtcs",
-    0x05: "oxygen_sensor_monitoring",
-    0x06: "on_board_monitoring",
-    0x07: "pending_dtcs",
-    0x08: "control_operation",
-    0x09: "vehicle_information",
-    0x0A: "permanent_dtcs",
-}
-
-OBD_MODE_POOL = list(OBD_MODE_NAMES)
-
-COMMON_PIDS = [
-    0x00,
-    0x01,
-    0x04,
-    0x05,
-    0x0C,
-    0x0D,
-    0x0F,
-    0x10,
-    0x11,
-    0x1C,
-    0x20,
-    0x2F,
-    0x40,
-    0x46,
-    0x5C,
-]
 
 
 @dataclass(frozen=True)
@@ -293,7 +260,7 @@ def choose_mode(rng: random.Random) -> int:
 
 def choose_pid(rng: random.Random, config: OBDFuzzConfig) -> int:
     if rng.random() < config.pid_bias:
-        return rng.choice(COMMON_PIDS)
+        return rng.choice(COMMON_OBD_PIDS)
     return rng.randrange(0x00, 0x100)
 
 

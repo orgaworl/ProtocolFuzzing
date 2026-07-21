@@ -16,36 +16,20 @@ from ..common.fuzzing_utils import (
     report_progress,
     should_report_progress,
 )
+from ..common.protocol_dictionary import (
+    UDS_COMMUNICATION_SUBFUNCTIONS,
+    UDS_DIDS,
+    UDS_DTC_SETTING_VALUES,
+    UDS_DTC_STATUS_MASKS,
+    UDS_ECU_RESET_TYPES,
+    UDS_ROUTINE_SUBFUNCTIONS,
+    UDS_SECURITY_SUBFUNCTIONS,
+    UDS_SESSION_LEVELS,
+    UDS_SERVICE_NAMES,
+    UDS_SERVICE_POOL,
+    UDS_TESTER_PRESENT_SUBFUNCTIONS,
+)
 from ..models import CANFrame, FrameFormat, FrameType
-
-
-UDS_SERVICE_NAMES = {
-    0x10: "diagnostic_session_control",
-    0x11: "ecu_reset",
-    0x14: "clear_diagnostic_information",
-    0x19: "read_dtc_information",
-    0x22: "read_data_by_identifier",
-    0x27: "security_access",
-    0x28: "communication_control",
-    0x2E: "write_data_by_identifier",
-    0x31: "routine_control",
-    0x3E: "tester_present",
-    0x85: "control_dtc_setting",
-}
-
-UDS_SERVICE_POOL = [
-    0x10,
-    0x11,
-    0x14,
-    0x19,
-    0x22,
-    0x27,
-    0x28,
-    0x2E,
-    0x31,
-    0x3E,
-    0x85,
-]
 
 
 @dataclass(frozen=True)
@@ -302,42 +286,42 @@ def choose_service_id(rng: random.Random, config: UDSFuzzConfig) -> int:
 
 def build_service_payload(rng: random.Random, service_id: int) -> bytes:
     if service_id == 0x10:
-        return bytes([0x10, rng.choice([0x01, 0x02, 0x03, 0x04])])
+        return bytes([0x10, rng.choice(UDS_SESSION_LEVELS)])
     if service_id == 0x11:
-        return bytes([0x11, rng.choice([0x01, 0x02, 0x03, 0x04, 0x05])])
+        return bytes([0x11, rng.choice(UDS_ECU_RESET_TYPES)])
     if service_id == 0x14:
         return bytes([0x14, *random_bytes(rng, 3)])
     if service_id == 0x19:
         return bytes([0x19, rng.choice([0x01, 0x02, 0x04, 0x06, 0x0A]), *random_bytes(rng, 3)])
     if service_id == 0x22:
-        dids = [random_did(rng)]
+        dids = [choose_did(rng)]
         if rng.random() < 0.4:
-            dids.append(random_did(rng))
+            dids.append(choose_did(rng))
         payload = bytearray([0x22])
         for did in dids:
             payload.extend(did)
         return bytes(payload[:7])
     if service_id == 0x27:
-        subfunction = rng.choice([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
+        subfunction = rng.choice(UDS_SECURITY_SUBFUNCTIONS)
         payload = bytearray([0x27, subfunction])
         payload.extend(random_bytes(rng, rng.randint(0, 5)))
         return bytes(payload[:7])
     if service_id == 0x28:
-        return bytes([0x28, rng.choice([0x00, 0x01, 0x02, 0x03]), rng.choice([0x00, 0x01, 0x02, 0x03])])
+        return bytes([0x28, rng.choice(UDS_COMMUNICATION_SUBFUNCTIONS), rng.choice(UDS_COMMUNICATION_SUBFUNCTIONS)])
     if service_id == 0x2E:
         payload = bytearray([0x2E])
-        payload.extend(random_did(rng))
+        payload.extend(choose_did(rng))
         payload.extend(random_bytes(rng, rng.randint(0, 4)))
         return bytes(payload[:7])
     if service_id == 0x31:
-        payload = bytearray([0x31, rng.choice([0x01, 0x02, 0x03])])
-        payload.extend(random_did(rng))
+        payload = bytearray([0x31, rng.choice(UDS_ROUTINE_SUBFUNCTIONS)])
+        payload.extend(choose_did(rng))
         payload.extend(random_bytes(rng, rng.randint(0, 3)))
         return bytes(payload[:7])
     if service_id == 0x3E:
-        return bytes([0x3E, rng.choice([0x00, 0x80])])
+        return bytes([0x3E, rng.choice(UDS_TESTER_PRESENT_SUBFUNCTIONS)])
     if service_id == 0x85:
-        return bytes([0x85, rng.choice([0x00, 0x01, 0x02])])
+        return bytes([0x85, rng.choice(UDS_DTC_SETTING_VALUES)])
 
     payload = bytearray([service_id])
     payload.extend(random_bytes(rng, rng.randint(0, 6)))
@@ -485,6 +469,8 @@ def write_summary(
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
-def random_did(rng: random.Random) -> bytes:
+def choose_did(rng: random.Random) -> bytes:
+    if rng.random() < 0.85:
+        return rng.choice(UDS_DIDS)
     did = rng.randrange(0x0000, 0xFFFF)
     return bytes([(did >> 8) & 0xFF, did & 0xFF])

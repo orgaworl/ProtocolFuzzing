@@ -10,11 +10,8 @@ from pathlib import Path
 
 from ..adapters import CANHardwareAdapter
 from ..common.fuzzing_utils import report_progress, should_report_progress
+from ..common.protocol_dictionary import PRIVATE_OPCODES, PRIVATE_TARGET_IDS
 from ..models import CANFrame, FrameFormat, FrameType
-
-
-DEFAULT_OPCODES = (0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x7F, 0x80, 0xFE, 0xFF)
-DEFAULT_TARGET_IDS = (0x100, 0x101, 0x200, 0x201, 0x300, 0x301)
 
 
 @dataclass(frozen=True)
@@ -28,8 +25,8 @@ class PrivateFuzzConfig:
     bitrate: int | None = 500000
     receive_timeout: float = 0.05
     inter_request_delay_ms: float = 10.0
-    target_ids: tuple[int, ...] = DEFAULT_TARGET_IDS
-    opcodes: tuple[int, ...] = DEFAULT_OPCODES
+    target_ids: tuple[int, ...] = PRIVATE_TARGET_IDS
+    opcodes: tuple[int, ...] = PRIVATE_OPCODES
     structured_rate: float = 0.7
     malformed_rate: float = 0.15
     min_payload_len: int = 1

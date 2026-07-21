@@ -17,15 +17,18 @@ diagnostic_bias = 0.6
 extended_probability = 0.0
 include_remote = false
 include_error = false
-keepalive = false
-keepalive_id = 0x7df
-keepalive_payload = "02 3E 00"
-keepalive_interval_ms = 500.0
-keepalive_format = "standard"
-keepalive_fd = false
 progress_interval = 1
 progress_seconds = 1.0
 no_progress = false
+
+[keepalive]
+bitrate = 500000
+data_bitrate = 2000000
+arbitration_id = 0x7df
+payload = "02 3E 00"
+interval_ms = 500.0
+format = "standard"
+fd = false
 
 [fdcheck]
 campaign = "can_fd_check"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import time
 import sys
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,23 @@ def parse_fuzz_args_with_config(parser: argparse.ArgumentParser, argv: list[str]
     return args
 
 
+def parse_keepalive_args_with_config(parser: argparse.ArgumentParser, argv: list[str] | None = None) -> argparse.Namespace:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    config_path = extract_config_path(argv)
+    defaults: dict[str, Any] = {}
+
+    if config_path is not None:
+        raw_config = read_toml_config(config_path)
+        bitrate = raw_config.get("bitrate")
+        if bitrate is not None:
+            defaults["bitrate"] = parse_optional_int(str(bitrate))
+        defaults.update(load_section_defaults_from_config(parser, raw_config, "keepalive"))
+
+    parser.set_defaults(**defaults)
+    args = parser.parse_args(argv)
+    return args
+
+
 def fuzz_main() -> None:
     parser = make_parser(description="run a CAN or CAN-based protocol fuzzing campaign on a real device")
     add_fuzz_arguments(parser)
@@ -145,6 +163,13 @@ def list_main() -> None:
     add_list_arguments(parser)
     args = parse_args_with_config(parser, "list")
     run_list_from_args(args)
+
+
+def keepalive_main() -> None:
+    parser = make_parser(description="send periodic keepalive frames on a real CAN device")
+    add_keepalive_arguments(parser)
+    args = parse_keepalive_args_with_config(parser)
+    run_keepalive_from_args(args)
 
 
 def fdcheck_main() -> None:
@@ -201,6 +226,9 @@ def legacy_main() -> None:
     list_parser = subparsers.add_parser("list", help="list available CAN interfaces", formatter_class=HelpFormatter)
     add_list_arguments(list_parser)
 
+    keepalive_parser = subparsers.add_parser("keepalive", help="send periodic keepalive frames", formatter_class=HelpFormatter)
+    add_keepalive_arguments(keepalive_parser)
+
     fdcheck_parser = subparsers.add_parser("fdcheck", help="test whether the hardware and target support CAN FD", formatter_class=HelpFormatter)
     add_fdcheck_arguments(fdcheck_parser)
 
@@ -228,6 +256,9 @@ def legacy_main() -> None:
         return
     if args.command == "list":
         run_list_from_args(args)
+        return
+    if args.command == "keepalive":
+        run_keepalive_from_args(args)
         return
     if args.command == "fdcheck":
         run_fdcheck_from_args(args)
@@ -315,12 +346,6 @@ def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
         extended_probability=args.extended_probability,
         include_remote=args.include_remote,
         include_error=args.include_error,
-        keepalive=args.keepalive,
-        keepalive_id=args.keepalive_id,
-        keepalive_payload=parse_hex_bytes(args.keepalive_payload),
-        keepalive_interval_ms=args.keepalive_interval_ms,
-        keepalive_extended=args.keepalive_format == "extended",
-        keepalive_fd=args.keepalive_fd,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
@@ -329,12 +354,6 @@ def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
         f"bitrate={config.bitrate} cases={config.cases}",
         flush=True,
     )
-    if config.keepalive:
-        console.debug(
-            f"keepalive=id=0x{config.keepalive_id:x} interval={config.keepalive_interval_ms}ms "
-            f"format={'extended' if config.keepalive_extended else 'standard'} fd={config.keepalive_fd}",
-            flush=True,
-        )
     try:
         if args.no_progress:
             result = run_fuzzing(config)
@@ -347,11 +366,6 @@ def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
     print_status_line(result.interrupted)
     console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
     console.debug(f"coverage_points={result.coverage_points} unique_reasons={result.unique_reasons}")
-    if config.keepalive:
-        keepalive_level = "warning" if result.keepalive_errors else "debug"
-        console.log(f"keepalive_sent={result.keepalive_sent} keepalive_errors={result.keepalive_errors}", keepalive_level)
-        if result.keepalive_errors:
-            console.warning(f"keepalive_last_error={result.keepalive_last_error}")
     console.info(f"csv={result.csv_path}")
     console.info(f"summary={result.summary_path}")
 
@@ -378,6 +392,49 @@ def run_fuzzing_with_tqdm(config: FuzzConfig):
             )
 
         return run_fuzzing(config, progress_callback=update_progress)
+
+
+def run_keepalive_from_args(args: argparse.Namespace) -> None:
+    interface, channel = resolve_interface_and_channel(args, "keepalive")
+    config = KeepaliveConfig(
+        enabled=True,
+        arbitration_id=args.arbitration_id,
+        payload=parse_hex_bytes(args.payload),
+        interval_ms=args.interval_ms,
+        extended=args.format == "extended",
+        fd=args.fd,
+    )
+    console.info(
+        f"opening interface={interface} channel={channel} bitrate={args.bitrate} "
+        f"interval={config.interval_ms}ms id=0x{config.arbitration_id:x}",
+        flush=True,
+    )
+    try:
+        with CANHardwareAdapter(
+            interface=interface,
+            channel=channel,
+            bitrate=args.bitrate,
+            receive_timeout=0.05,
+            fd=args.fd,
+            data_bitrate=args.data_bitrate,
+        ) as adapter:
+            worker = KeepaliveWorker(adapter, config)
+            worker.start()
+            console.info("keepalive running; press Ctrl+C to stop", flush=True)
+            try:
+                while True:
+                    time.sleep(1.0)
+            except KeyboardInterrupt:
+                stats = worker.stop()
+    except CANConnectionError as exc:
+        console.error(f"error: {exc}")
+        raise SystemExit(2) from exc
+    else:
+        console.info(f"keepalive_sent={stats.sent} keepalive_errors={stats.errors}")
+        if stats.errors:
+            console.warning(f"keepalive_last_error={stats.last_error}")
+
+
 def run_plot_from_args(args: argparse.Namespace) -> None:
     outputs = plot_results(Path(args.input), Path(args.output_dir))
     for output in outputs:
@@ -864,12 +921,6 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--extended-probability", type=float, default=0.0, help="probability of generating extended ID frames")
     optional.add_argument("--include-remote", action="store_true", default=False, help="include remote frames in the campaign")
     optional.add_argument("--include-error", action="store_true", default=False, help="include error frames in the campaign")
-    optional.add_argument("--keepalive", action="store_true", default=False, help="send a periodic activation frame in a background thread")
-    optional.add_argument("--keepalive-id", type=parse_int, default=0x7DF, help="arbitration ID for the periodic activation frame")
-    optional.add_argument("--keepalive-payload", default="02 3E 00", help="hex payload for the periodic activation frame")
-    optional.add_argument("--keepalive-interval-ms", type=float, default=500.0, help="delay between activation frames")
-    optional.add_argument("--keepalive-format", choices=["standard", "extended"], default="standard", help="frame format for the activation frame")
-    optional.add_argument("--keepalive-fd", action="store_true", default=False, help="send the activation frame as CAN FD")
     optional.add_argument("--target-ids", type=parse_int_list, default=parse_int_list("0x100,0x101,0x200,0x201,0x300,0x301"), help="comma separated target arbitration IDs")
     optional.add_argument("--opcodes", type=parse_int_list, default=parse_int_list("0x00,0x01,0x02,0x03,0x10,0x11,0x20,0x21,0x7f,0x80,0xfe,0xff"), help="comma separated private control opcodes")
     optional.add_argument("--structured-rate", type=float, default=0.7, help="probability of generating structured private control payloads")
@@ -879,6 +930,20 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
     optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+
+
+def add_keepalive_arguments(parser: argparse.ArgumentParser) -> None:
+    optional = parser.add_argument_group("optional arguments")
+    add_config_argument(optional)
+    optional.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan; if omitted, interfaces are discovered automatically")
+    optional.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface; if omitted, interfaces are discovered automatically")
+    optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
+    optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
+    optional.add_argument("--fd", action="store_true", default=False, help="send the activation frame as CAN FD")
+    optional.add_argument("--arbitration-id", type=parse_int, default=0x7DF, help="arbitration ID for the periodic activation frame")
+    optional.add_argument("--payload", default="02 3E 00", help="hex payload for the periodic activation frame")
+    optional.add_argument("--interval-ms", type=float, default=500.0, help="delay between activation frames")
+    optional.add_argument("--format", choices=["standard", "extended"], default="standard", help="frame format for the activation frame")
 
 
 def add_plot_arguments(parser: argparse.ArgumentParser) -> None:

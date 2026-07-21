@@ -10,10 +10,10 @@ from pathlib import Path
 
 from ..adapters import CANHardwareAdapter
 from ..common.fuzzing_utils import report_progress, should_report_progress
-from ..common.keepalive import KeepaliveConfig, KeepaliveWorker
+from ..common.protocol_dictionary import COMMON_CAN_IDS, COMMON_CLASSIC_LENGTHS, COMMON_DIAGNOSTIC_TEMPLATES, COMMON_DIAGNOSTIC_TEMPLATES_FD, COMMON_FD_LENGTHS
 from ..models import CANFrame, FrameFormat, FrameType
 
-DIAGNOSTIC_IDS = [0x7DF, 0x7E0, 0x7E1, 0x7E2, 0x7E3, 0x7E4, 0x7E5, 0x7E6, 0x7E7]
+DIAGNOSTIC_IDS = COMMON_CAN_IDS
 
 
 class CANFuzzingStrategyConfig:
@@ -46,12 +46,6 @@ class FuzzConfig:
     extended_probability: float = 0.0
     include_remote: bool = False
     include_error: bool = False
-    keepalive: bool = False
-    keepalive_id: int = 0x7DF
-    keepalive_payload: bytes = b"\x02\x3E\x00"
-    keepalive_interval_ms: float = 500.0
-    keepalive_extended: bool = False
-    keepalive_fd: bool = False
     progress_interval: int = 100
     progress_seconds: float = 1.0
 
@@ -67,9 +61,6 @@ class FuzzResult:
     responses: int
     unique_reasons: int
     coverage_points: int
-    keepalive_sent: int
-    keepalive_errors: int
-    keepalive_last_error: str
     csv_path: Path
     summary_path: Path
 
@@ -102,18 +93,6 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         writer.writeheader()
         fh.flush()
 
-        keepalive = KeepaliveWorker(
-            adapter,
-            KeepaliveConfig(
-                enabled=config.keepalive,
-                arbitration_id=config.keepalive_id,
-                payload=config.keepalive_payload,
-                interval_ms=config.keepalive_interval_ms,
-                extended=config.keepalive_extended,
-                fd=config.keepalive_fd,
-            ),
-        )
-        keepalive.start()
         try:
             current_timestamp_ms = 0
             for case_id in range(config.cases):
@@ -183,8 +162,6 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                 coverage_points=len(coverage),
                 interrupted=True,
             )
-        finally:
-            keepalive_stats = keepalive.stop()
 
     write_summary(
         summary_path=summary_path,
@@ -197,9 +174,6 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         interrupted=interrupted,
         reasons=reasons,
         coverage=coverage,
-        keepalive_sent=keepalive_stats.sent,
-        keepalive_errors=keepalive_stats.errors,
-        keepalive_last_error=keepalive_stats.last_error,
     )
 
     return FuzzResult(
@@ -212,9 +186,6 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         responses=responses,
         unique_reasons=len(reasons),
         coverage_points=len(coverage),
-        keepalive_sent=keepalive_stats.sent,
-        keepalive_errors=keepalive_stats.errors,
-        keepalive_last_error=keepalive_stats.last_error,
         csv_path=csv_path,
         summary_path=summary_path,
     )
@@ -266,23 +237,14 @@ def choose_identifier(rng: random.Random, frame_format: FrameFormat, config: CAN
 
 def choose_payload(rng: random.Random, identifier: int, config: CANFuzzingStrategyConfig) -> bytes:
     if identifier in DIAGNOSTIC_IDS and rng.random() < 0.75:
-        templates = [
-            [0x02, 0x10, 0x01],
-            [0x02, 0x10, 0x03],
-            [0x02, 0x27, 0x01],
-            [0x04, 0x27, 0x02, 0x12, 0x34],
-            [0x03, 0x22, 0xF1, 0x90],
-            [0x04, 0x31, 0x01, 0xFF, 0x00],
-            [0x01, 0x3E],
-        ]
+        templates = COMMON_DIAGNOSTIC_TEMPLATES_FD if config.fd else COMMON_DIAGNOSTIC_TEMPLATES
         data = rng.choice(templates)
-        return bytes(pad_classic_payload(data, rng))
+        return bytes(pad_classic_payload(list(data), rng))
 
     max_len = 64 if config.fd else 8
-    interesting_lengths = [0, 1, 2, 3, 4, 7, 8]
-    if config.fd:
-        interesting_lengths.extend([12, 16, 32, 48, 64])
-    length = rng.choice([value for value in interesting_lengths if value <= max_len])
+    lengths = COMMON_FD_LENGTHS if config.fd else COMMON_CLASSIC_LENGTHS
+    interesting_lengths = [value for value in lengths if value <= max_len]
+    length = rng.choice(interesting_lengths)
     return bytes(rng.randrange(256) for _ in range(length))
 
 
@@ -348,9 +310,6 @@ def write_summary(
     interrupted: bool,
     reasons: set[str],
     coverage: set[str],
-    keepalive_sent: int,
-    keepalive_errors: int,
-    keepalive_last_error: str,
 ) -> None:
     denominator = completed_cases or 1
     summary = {
@@ -365,14 +324,6 @@ def write_summary(
         "channel": config.channel,
         "bitrate": config.bitrate,
         "fd": config.fd,
-        "keepalive": config.keepalive,
-        "keepalive_id": config.keepalive_id,
-        "keepalive_interval_ms": config.keepalive_interval_ms,
-        "keepalive_extended": config.keepalive_extended,
-        "keepalive_fd": config.keepalive_fd,
-        "keepalive_sent": keepalive_sent,
-        "keepalive_errors": keepalive_errors,
-        "keepalive_last_error": keepalive_last_error,
         "sent": sent,
         "faults": faults,
         "responses": responses,
