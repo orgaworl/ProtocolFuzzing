@@ -40,7 +40,7 @@ def parse_args_with_config(parser: argparse.ArgumentParser, section: str) -> arg
         parser.set_defaults(**defaults)
         relax_configured_required_args(parser, defaults)
     args = parser.parse_args()
-    validate_required_args(parser, args)
+    validate_required_args(parser, args, section)
     return args
 
 
@@ -105,14 +105,20 @@ def convert_config_value(action: argparse.Action, value: Any) -> Any:
     return value
 
 
-def validate_required_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+def validate_required_args(parser: argparse.ArgumentParser, args: argparse.Namespace, section: str) -> None:
     missing = []
-    for name in ("interface", "channel"):
+    for name in required_args_for_section(section):
         value = getattr(args, name, None)
         if value is None or value == "" or value == []:
-            missing.append(f"--{name.replace('_', '-')}" )
+            missing.append(f"--{name.replace('_', '-')}")
     if missing:
         parser.error("missing required argument(s): " + ", ".join(missing))
+
+
+def required_args_for_section(section: str) -> list[str]:
+    if section in {"fuzz", "fdcheck", "scan", "udsfuzz", "obdfuzz", "privatefuzz"}:
+        return ["interface", "channel"]
+    return []
 
 
 def relax_configured_required_args(parser: argparse.ArgumentParser, defaults: dict[str, Any]) -> None:
@@ -125,11 +131,27 @@ def add_config_argument(optional: argparse._ArgumentGroup) -> None:
     optional.add_argument("-c", "--config", default=None, help="TOML config file; command line options override config values")
 
 
+def print_fuzz_quick_help() -> None:
+    print("usage: fuzz [-h] [-c CONFIG] [--interface INTERFACE] [--channel CHANNEL]")
+    print()
+    print("options:")
+    print("  -h, --help            show this help message and exit")
+    print()
+    print("required arguments:")
+    print("  --interface INTERFACE")
+    print("                        python-can interface, for example pcan, vector, slcan, socketcan")
+    print("  --channel CHANNEL     CAN channel name used by the selected python-can interface")
+    print()
+    print("optional arguments:")
+    print("  -c CONFIG, --config CONFIG")
+    print("                        TOML config file; command line options override config values")
+
+
 def fuzz_main() -> None:
     parser = make_parser(description="run a CAN fuzzing campaign on a real CAN device")
     add_fuzz_arguments(parser)
     if len(sys.argv) == 1:
-        parser.print_help()
+        print_fuzz_quick_help()
         return
     args = parse_args_with_config(parser, "fuzz")
     run_fuzz_from_args(args)
@@ -281,7 +303,7 @@ def parse_legacy_args_with_config(parser: argparse.ArgumentParser) -> argparse.N
             subparser.set_defaults(**defaults)
             relax_configured_required_args(subparser, defaults)
     args = parser.parse_args()
-    validate_required_args(parser, args)
+    validate_required_args(parser, args, section or "")
     return args
 
 

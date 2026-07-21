@@ -1,0 +1,117 @@
+# Default CAN hardware settings shared by command sections unless overridden.
+interface = "pcan"
+channel = "PCAN_USBBUS1"
+bitrate = 500000
+output_dir = "result"
+
+[fuzz]
+cases = 1000
+seed = 1337
+campaign = "can_baseline"
+receive_timeout = 0.05
+inter_frame_delay_ms = 5.0
+fd = false
+data_bitrate = 2000000
+id_min = 0x000
+id_max = 0x7ff
+diagnostic_bias = 0.6
+extended_probability = 0.0
+include_remote = false
+include_error = false
+keepalive = false
+keepalive_id = 0x7df
+keepalive_payload = "02 3E 00"
+keepalive_interval_ms = 500.0
+keepalive_format = "standard"
+keepalive_fd = false
+progress_interval = 1
+progress_seconds = 1.0
+no_progress = false
+
+[fdcheck]
+campaign = "can_fd_check"
+data_bitrate = 2000000
+fd_clock = 80000000
+nominal_sample_point = 87.5
+data_sample_point = 80.0
+probe_timeout = 0.15
+probe_delay_ms = 20.0
+no_progress = false
+
+[scan]
+campaign = "can_scan"
+passive_duration = 10.0
+active_timeout = 0.25
+inter_probe_delay_ms = 50.0
+physical_start = 0x7e0
+physical_end = 0x7e7
+fd = false
+data_bitrate = 2000000
+passive_only = false
+active_only = false
+no_progress = false
+
+[udsfuzz]
+cases = 1000
+seed = 2024
+campaign = "uds_baseline"
+receive_timeout = 0.15
+inter_request_delay_ms = 10.0
+request_mode = "mixed"
+functional_id = 0x7df
+physical_start = 0x7e0
+physical_end = 0x7e7
+service_bias = 0.85
+malformed_rate = 0.15
+progress_interval = 1
+progress_seconds = 1.0
+no_progress = false
+
+[obdfuzz]
+cases = 1000
+seed = 2025
+campaign = "obd_baseline"
+receive_timeout = 0.15
+inter_request_delay_ms = 20.0
+request_mode = "functional"
+functional_id = 0x7df
+physical_start = 0x7e0
+physical_end = 0x7e7
+pid_bias = 0.8
+malformed_rate = 0.1
+progress_interval = 1
+progress_seconds = 1.0
+no_progress = false
+
+[privatefuzz]
+cases = 1000
+seed = 2026
+campaign = "private_control_baseline"
+receive_timeout = 0.05
+inter_request_delay_ms = 10.0
+target_ids = [0x100, 0x101, 0x200, 0x201, 0x300, 0x301]
+opcodes = [0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x7f, 0x80, 0xfe, 0xff]
+structured_rate = 0.7
+malformed_rate = 0.15
+min_payload_len = 1
+max_payload_len = 8
+extended = false
+fd = false
+data_bitrate = 2000000
+progress_interval = 1
+progress_seconds = 1.0
+no_progress = false
+
+[plot]
+input = "result/can_baseline_cases.csv"
+output_dir = "plot"
+
+[clean]
+result_dir = "result"
+plot_dir = "plot"
+
+[list]
+interfaces = ["pcan", "vector", "kvaser", "slcan", "seeedstudio", "socketcan", "virtual"]
+include_virtual = false
+json = false
+verbose = false
