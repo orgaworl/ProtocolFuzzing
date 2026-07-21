@@ -113,7 +113,7 @@ class CANHardwareAdapter:
         except ImportError as exc:
             raise RuntimeError("python-can is required for real CAN device testing") from exc
 
-        self._drain_pending()
+        self.drain_pending()
         message = self._build_message(frame, is_fd=self.fd)
 
         start = time.perf_counter()
@@ -204,8 +204,6 @@ class CANHardwareAdapter:
             return quiet_call(self._bus.recv, timeout=timeout)
 
     def drain_pending(self) -> None:
-        self._drain_pending()
-    def _drain_pending(self) -> None:
         if self._bus is None:
             return
         while True:

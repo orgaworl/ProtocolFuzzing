@@ -4,21 +4,28 @@ import argparse
 import json
 import shutil
 import sys
-import tomllib
 from pathlib import Path
 from typing import Any
 
-from .fuzzers.can import FuzzConfig, FuzzResult, run_fuzzing
 from .adapters import CANConnectionError
+from .common import console
+from .common.config import (
+    extract_config_path,
+    load_parser_defaults_from_config,
+    load_section_defaults_from_config,
+    read_toml_config,
+    relax_configured_required_args,
+    validate_required_args,
+)
+from .common.keepalive import KeepaliveConfig, KeepaliveWorker
 from .discovery import DEFAULT_DISCOVERY_INTERFACES, list_can_interfaces
 from .fdcheck import FDCheckConfig, run_fdcheck
-from .plotting import plot_results
-from .common import console
-from .common.keepalive import KeepaliveConfig, KeepaliveWorker
+from .fuzzers.can import FuzzConfig, FuzzResult, run_fuzzing
 from .fuzzers.obd import OBDFuzzConfig, run_obd_fuzzing
 from .fuzzers.private_control import PrivateFuzzConfig, run_private_fuzzing
-from .scanner import ScanConfig, run_scan
 from .fuzzers.uds import UDSFuzzConfig, run_uds_fuzzing
+from .plotting import plot_results
+from .scanner import ScanConfig, run_scan
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     def _get_help_string(self, action: argparse.Action) -> str:
         help_text = action.help or ""
@@ -33,127 +40,89 @@ def make_parser(description: str) -> argparse.ArgumentParser:
     return argparse.ArgumentParser(description=description, formatter_class=HelpFormatter)
 
 
-def parse_args_with_config(parser: argparse.ArgumentParser, section: str) -> argparse.Namespace:
-    config_path = extract_config_path(sys.argv[1:])
+def parse_args_with_config(parser: argparse.ArgumentParser, section: str, argv: list[str] | None = None) -> argparse.Namespace:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    config_path = extract_config_path(argv)
     if config_path is not None:
         defaults = load_parser_defaults_from_config(parser, config_path, section)
         parser.set_defaults(**defaults)
         relax_configured_required_args(parser, defaults)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     validate_required_args(parser, args, section)
     return args
-
-
-def extract_config_path(argv: list[str]) -> Path | None:
-    config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument("-c", "--config")
-    known, _ = config_parser.parse_known_args(argv)
-    if known.config is None:
-        return None
-    return Path(known.config)
-
-
-def load_parser_defaults_from_config(parser: argparse.ArgumentParser, path: Path, section: str) -> dict[str, Any]:
-    try:
-        with path.open("rb") as fh:
-            raw_config = tomllib.load(fh)
-    except OSError as exc:
-        parser.error(f"could not read config file {path}: {exc}")
-    except tomllib.TOMLDecodeError as exc:
-        parser.error(f"could not parse config file {path}: {exc}")
-
-    config = merge_config_sections(raw_config, section)
-    action_map = config_action_map(parser)
-    unknown = sorted(key for key in config if key not in action_map)
-    if unknown:
-        parser.error(f"unknown config option(s) for {section}: {', '.join(unknown)}")
-    return {key: convert_config_value(action_map[key], value) for key, value in config.items()}
-
-
-def merge_config_sections(raw_config: dict[str, Any], section: str) -> dict[str, Any]:
-    merged = {key: value for key, value in raw_config.items() if not isinstance(value, dict)}
-    section_config = raw_config.get(section, {})
-    if isinstance(section_config, dict):
-        merged.update(section_config)
-    return {normalize_config_key(key): value for key, value in merged.items()}
-
-
-def normalize_config_key(key: str) -> str:
-    return key.replace("-", "_")
-
-
-def config_action_map(parser: argparse.ArgumentParser) -> dict[str, argparse.Action]:
-    result: dict[str, argparse.Action] = {}
-    for action in parser._actions:
-        if action.dest in {"help", argparse.SUPPRESS}:
-            continue
-        result[action.dest] = action
-    return result
-
-
-def convert_config_value(action: argparse.Action, value: Any) -> Any:
-    if isinstance(action, argparse._StoreTrueAction):
-        return bool(value)
-    if isinstance(action, argparse._StoreFalseAction):
-        return not bool(value)
-    if action.dest in {"interfaces", "target_ids", "opcodes"} and isinstance(value, list):
-        return ",".join(str(item) for item in value)
-    if action.type is None or value is None:
-        return value
-    if isinstance(value, str):
-        return action.type(value)
-    return value
-
-
-def validate_required_args(parser: argparse.ArgumentParser, args: argparse.Namespace, section: str) -> None:
-    missing = []
-    for name in required_args_for_section(section):
-        value = getattr(args, name, None)
-        if value is None or value == "" or value == []:
-            missing.append(f"--{name.replace('_', '-')}")
-    if missing:
-        parser.error("missing required argument(s): " + ", ".join(missing))
-
-
-def required_args_for_section(section: str) -> list[str]:
-    if section in {"fuzz", "fdcheck", "scan", "udsfuzz", "obdfuzz", "privatefuzz"}:
-        return ["interface", "channel"]
-    return []
-
-
-def relax_configured_required_args(parser: argparse.ArgumentParser, defaults: dict[str, Any]) -> None:
-    for action in parser._actions:
-        if action.required and action.dest in defaults:
-            action.required = False
 
 
 def add_config_argument(optional: argparse._ArgumentGroup) -> None:
     optional.add_argument("-c", "--config", default=None, help="TOML config file; command line options override config values")
 
 
-def print_fuzz_quick_help() -> None:
-    print("usage: fuzz [-h] [-c CONFIG] [--interface INTERFACE] [--channel CHANNEL]")
-    print()
-    print("options:")
-    print("  -h, --help            show this help message and exit")
-    print()
-    print("required arguments:")
-    print("  --interface INTERFACE")
-    print("                        python-can interface, for example pcan, vector, slcan, socketcan")
-    print("  --channel CHANNEL     CAN channel name used by the selected python-can interface")
-    print()
-    print("optional arguments:")
-    print("  -c CONFIG, --config CONFIG")
-    print("                        TOML config file; command line options override config values")
+FUZZ_PROTOCOL_ALIASES = {
+    "baseline": "can",
+    "can_baseline": "can",
+    "private_control": "private",
+    "privatefuzz": "private",
+    "udsfuzz": "uds",
+    "obdfuzz": "obd",
+}
+FUZZ_PROTOCOL_SECTION_MAP = {
+    "can": None,
+    "uds": "udsfuzz",
+    "obd": "obdfuzz",
+    "private": "privatefuzz",
+}
+
+
+def normalize_protocol(value: str | None) -> str | None:
+    if value is None:
+        return None
+    token = str(value).strip().lower().replace("-", "_")
+    if not token:
+        return None
+    return FUZZ_PROTOCOL_ALIASES.get(token, token)
+
+
+def parse_protocol(value: str) -> str:
+    normalized = normalize_protocol(value)
+    if normalized in {"can", "uds", "obd", "private"}:
+        return normalized
+    raise argparse.ArgumentTypeError("protocol must be one of: can, uds, obd, private")
+
+
+def extract_protocol_hint(argv: list[str]) -> str | None:
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--protocol")
+    known, _ = pre_parser.parse_known_args(argv)
+    return normalize_protocol(known.protocol)
+
+
+def parse_fuzz_args_with_config(parser: argparse.ArgumentParser, argv: list[str] | None = None) -> argparse.Namespace:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    config_path = extract_config_path(argv)
+    protocol = extract_protocol_hint(argv)
+    defaults: dict[str, Any] = {}
+
+    if config_path is not None:
+        raw_config = read_toml_config(config_path)
+        defaults.update(load_parser_defaults_from_config(parser, config_path, "fuzz"))
+        if protocol is None:
+            protocol = normalize_protocol(defaults.get("protocol"))
+        protocol_section = FUZZ_PROTOCOL_SECTION_MAP.get(protocol or "can")
+        if protocol_section is not None:
+            defaults.update(load_section_defaults_from_config(parser, raw_config, protocol_section))
+
+    protocol = protocol or "can"
+    defaults["protocol"] = protocol
+    parser.set_defaults(**defaults)
+    relax_configured_required_args(parser, defaults)
+    args = parser.parse_args(argv)
+    args.protocol = normalize_protocol(getattr(args, "protocol", None)) or protocol
+    return args
 
 
 def fuzz_main() -> None:
-    parser = make_parser(description="run a CAN fuzzing campaign on a real CAN device")
+    parser = make_parser(description="run a CAN or CAN-based protocol fuzzing campaign on a real device")
     add_fuzz_arguments(parser)
-    if len(sys.argv) == 1:
-        print_fuzz_quick_help()
-        return
-    args = parse_args_with_config(parser, "fuzz")
+    args = parse_fuzz_args_with_config(parser)
     run_fuzz_from_args(args)
 
 
@@ -181,9 +150,6 @@ def list_main() -> None:
 def fdcheck_main() -> None:
     parser = make_parser(description="test whether the CAN hardware and target device support CAN FD")
     add_fdcheck_arguments(parser)
-    if len(sys.argv) == 1:
-        parser.print_help()
-        return
     args = parse_args_with_config(parser, "fdcheck")
     run_fdcheck_from_args(args)
 
@@ -191,9 +157,6 @@ def fdcheck_main() -> None:
 def udsfuzz_main() -> None:
     parser = make_parser(description="run a UDS/ISO-TP fuzzing campaign on a real CAN device")
     add_udsfuzz_arguments(parser)
-    if len(sys.argv) == 1:
-        parser.print_help()
-        return
     args = parse_args_with_config(parser, "udsfuzz")
     run_udsfuzz_from_args(args)
 
@@ -201,9 +164,6 @@ def udsfuzz_main() -> None:
 def obdfuzz_main() -> None:
     parser = make_parser(description="run an OBD-II fuzzing campaign on a real CAN device")
     add_obdfuzz_arguments(parser)
-    if len(sys.argv) == 1:
-        parser.print_help()
-        return
     args = parse_args_with_config(parser, "obdfuzz")
     run_obdfuzz_from_args(args)
 
@@ -211,9 +171,6 @@ def obdfuzz_main() -> None:
 def privatefuzz_main() -> None:
     parser = make_parser(description="run a configurable private control protocol fuzzing campaign on CAN")
     add_privatefuzz_arguments(parser)
-    if len(sys.argv) == 1:
-        parser.print_help()
-        return
     args = parse_args_with_config(parser, "privatefuzz")
     run_privatefuzz_from_args(args)
 
@@ -318,6 +275,28 @@ def get_legacy_subparser(parser: argparse.ArgumentParser, command: str | None) -
 
 
 def run_fuzz_from_args(args: argparse.Namespace) -> None:
+    protocol = normalize_protocol(getattr(args, "protocol", None)) or "can"
+    args.protocol = protocol
+
+    if protocol == "can":
+        run_can_fuzz_from_args(args)
+        return
+
+    args.interface, args.channel = resolve_interface_and_channel(args, "fuzz")
+    if protocol == "uds":
+        run_udsfuzz_from_args(args)
+        return
+    if protocol == "obd":
+        run_obdfuzz_from_args(args)
+        return
+    if protocol == "private":
+        run_privatefuzz_from_args(args)
+        return
+    raise SystemExit(f"unsupported protocol: {protocol}")
+
+
+def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
+    args.interface, args.channel = resolve_interface_and_channel(args, "fuzz")
     config = FuzzConfig(
         cases=args.cases,
         seed=args.seed,
@@ -376,6 +355,7 @@ def run_fuzz_from_args(args: argparse.Namespace) -> None:
     console.info(f"csv={result.csv_path}")
     console.info(f"summary={result.summary_path}")
 
+
 def run_fuzzing_with_tqdm(config: FuzzConfig):
     from tqdm import tqdm
 
@@ -427,8 +407,79 @@ def run_list_from_args(args: argparse.Namespace) -> None:
     print_interface_table(configs)
 
 
+def resolve_interface_and_channel(args: argparse.Namespace, section: str) -> tuple[str, str]:
+    interface = getattr(args, "interface", None)
+    channel = getattr(args, "channel", None)
+    if interface and channel:
+        return str(interface), str(channel)
+
+    console.warning(
+        f"{section}: interface and channel were not fully provided; running interface discovery",
+        flush=True,
+    )
+    interfaces = parse_interface_names(args.interfaces) if getattr(args, "interfaces", None) else None
+    if interface and interfaces is None:
+        interfaces = [str(interface)]
+    try:
+        configs = list_can_interfaces(
+            interfaces=interfaces,
+            include_virtual=getattr(args, "include_virtual", False),
+            verbose=getattr(args, "verbose", False),
+        )
+    except RuntimeError as exc:
+        console.error(f"error: {exc}")
+        raise SystemExit(2) from exc
+
+    if getattr(args, "json", False):
+        print(json.dumps(configs, indent=2, default=str))
+    else:
+        print_interface_table(configs)
+
+    if not configs:
+        raise SystemExit(2)
+    if len(configs) == 1:
+        selected = configs[0]
+        console.warning(
+            f"auto-selected interface={selected.get('interface', '')} channel={selected.get('channel', '')}",
+            flush=True,
+        )
+        return str(selected.get("interface", "")), str(selected.get("channel", ""))
+
+    selected = prompt_interface_selection(configs)
+    console.warning(
+        f"selected interface={selected.get('interface', '')} channel={selected.get('channel', '')}",
+        flush=True,
+    )
+    return str(selected.get("interface", "")), str(selected.get("channel", ""))
+
+
+def prompt_interface_selection(configs: list[dict[str, Any]]) -> dict[str, Any]:
+    while True:
+        console.info("select a CAN interface by index:", flush=True)
+        for index, config in enumerate(configs, start=1):
+            console.info(
+                f"  [{index}] {config.get('interface', '')} {config.get('channel', '')} "
+                f"{config.get('device_name') or config.get('device') or ''}",
+                flush=True,
+            )
+        try:
+            choice = input(f"select CAN interface [1-{len(configs)}]: ").strip()
+        except EOFError:
+            raise SystemExit(2) from None
+        if not choice:
+            continue
+        try:
+            index = int(choice)
+        except ValueError:
+            console.warning("please enter a numeric selection", flush=True)
+            continue
+        if 1 <= index <= len(configs):
+            return configs[index - 1]
+        console.warning(f"selection must be between 1 and {len(configs)}", flush=True)
+
 
 def run_scan_from_args(args: argparse.Namespace) -> None:
+    args.interface, args.channel = resolve_interface_and_channel(args, "scan")
     passive = not args.active_only
     active = not args.passive_only
     config = ScanConfig(
@@ -475,6 +526,7 @@ def run_scan_from_args(args: argparse.Namespace) -> None:
 
 
 def run_fdcheck_from_args(args: argparse.Namespace) -> None:
+    args.interface, args.channel = resolve_interface_and_channel(args, "fdcheck")
     config = FDCheckConfig(
         interface=args.interface,
         channel=args.channel,
@@ -772,15 +824,38 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
     add_config_argument(optional)
-    required.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan")
-    required.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface")
+    optional.add_argument(
+        "--protocol",
+        type=parse_protocol,
+        default="can",
+        metavar="PROTOCOL",
+        help="fuzzing protocol to run: can, uds, obd, or private",
+    )
+    required.add_argument(
+        "--interface",
+        default=None,
+        help="python-can interface, for example pcan, vector, slcan, socketcan; if omitted, interfaces are discovered automatically",
+    )
+    required.add_argument(
+        "--channel",
+        default=None,
+        help="CAN channel name used by the selected python-can interface; if omitted, interfaces are discovered automatically",
+    )
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
-    optional.add_argument("--cases", type=int, default=1000, help="number of generated CAN frames")
+    optional.add_argument("--cases", type=int, default=1000, help="number of generated requests or frames")
     optional.add_argument("--seed", type=int, default=1337, help="random seed")
     optional.add_argument("--campaign", default="can_baseline", help="campaign name used for output files")
     optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON results")
     optional.add_argument("--receive-timeout", type=float, default=0.05, help="seconds to collect response frames after each send")
     optional.add_argument("--inter-frame-delay-ms", type=float, default=5.0, help="delay between transmitted fuzzing frames")
+    optional.add_argument("--inter-request-delay-ms", type=float, default=10.0, help="delay between protocol requests")
+    optional.add_argument("--request-mode", choices=["functional", "physical", "mixed"], default="mixed", help="request addressing mode")
+    optional.add_argument("--functional-id", type=parse_int, default=0x7DF, help="functional request ID")
+    optional.add_argument("--physical-start", type=parse_int, default=0x7E0, help="first physical request ID to probe")
+    optional.add_argument("--physical-end", type=parse_int, default=0x7E7, help="last physical request ID to probe")
+    optional.add_argument("--service-bias", type=float, default=0.85, help="probability of generating a structured UDS service instead of a raw random request")
+    optional.add_argument("--pid-bias", type=float, default=0.8, help="probability of choosing a common OBD PID")
+    optional.add_argument("--malformed-rate", type=float, default=0.15, help="probability of generating a malformed protocol request")
     optional.add_argument("--fd", action="store_true", default=False, help="send CAN FD frames")
     optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
     optional.add_argument("--id-min", type=parse_int, default=0x000, help="minimum arbitration ID")
@@ -795,6 +870,12 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--keepalive-interval-ms", type=float, default=500.0, help="delay between activation frames")
     optional.add_argument("--keepalive-format", choices=["standard", "extended"], default="standard", help="frame format for the activation frame")
     optional.add_argument("--keepalive-fd", action="store_true", default=False, help="send the activation frame as CAN FD")
+    optional.add_argument("--target-ids", type=parse_int_list, default=parse_int_list("0x100,0x101,0x200,0x201,0x300,0x301"), help="comma separated target arbitration IDs")
+    optional.add_argument("--opcodes", type=parse_int_list, default=parse_int_list("0x00,0x01,0x02,0x03,0x10,0x11,0x20,0x21,0x7f,0x80,0xfe,0xff"), help="comma separated private control opcodes")
+    optional.add_argument("--structured-rate", type=float, default=0.7, help="probability of generating structured private control payloads")
+    optional.add_argument("--min-payload-len", type=int, default=1, help="minimum payload length")
+    optional.add_argument("--max-payload-len", type=int, default=8, help="maximum payload length")
+    optional.add_argument("--extended", action="store_true", default=False, help="use extended CAN identifiers")
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
     optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
@@ -1070,6 +1151,7 @@ def status_level(status: str) -> str:
     if lowered in {"interrupted", "not_run", "no_response"} or "warning" in lowered:
         return "warning"
     return "normal"
+
 
 
 

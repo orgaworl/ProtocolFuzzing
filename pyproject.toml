@@ -15,9 +15,6 @@ dependencies = [
 
 [project.scripts]
 fuzz = "can_fuzzing.cli:fuzz_main"
-udsfuzz = "can_fuzzing.cli:udsfuzz_main"
-obdfuzz = "can_fuzzing.cli:obdfuzz_main"
-privatefuzz = "can_fuzzing.cli:privatefuzz_main"
 plot = "can_fuzzing.cli:plot_main"
 clean = "can_fuzzing.cli:clean_main"
 list = "can_fuzzing.cli:list_main"

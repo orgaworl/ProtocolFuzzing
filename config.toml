@@ -1,11 +1,10 @@
 # Default CAN hardware settings shared by command sections unless overridden.
-interface = "pcan"
-channel = "PCAN_USBBUS1"
 bitrate = 500000
 output_dir = "result"
 
 [fuzz]
-cases = 1000
+protocol = "can"
+cases = 10000
 seed = 1337
 campaign = "can_baseline"
 receive_timeout = 0.05

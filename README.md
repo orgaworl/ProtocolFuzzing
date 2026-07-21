@@ -6,10 +6,7 @@ This repository contains a CAN protocol fuzzing framework for real connected CAN
 
 The command line interfaces are declared in `pyproject.toml` under `[project.scripts]`:
 
-- `fuzz`: run a CAN fuzzing campaign against a real CAN device.
-- `udsfuzz`: run a UDS / ISO-TP fuzzing campaign on top of CAN.
-- `obdfuzz`: run an OBD-II fuzzing campaign on top of CAN.
-- `privatefuzz`: run a configurable private control protocol fuzzing campaign on top of CAN.
+- `fuzz`: run a CAN-based fuzzing campaign against a real CAN device and choose the protocol with `--protocol`.
 - `scan`: passively listen and actively probe a CAN bus for IDs and diagnostic responders.
 - `fdcheck`: test whether the CAN adapter and target device support CAN FD.
 - `plot`: generate PDF plots from campaign results.
@@ -50,32 +47,32 @@ uv run fdcheck --interface pcan --channel PCAN_USBBUS1 --bitrate 500000 --data-b
 Run a fuzzing campaign against a real CAN interface:
 
 ```bash
-uv run fuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
+uv run fuzz --protocol can --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
 ```
 
 Run an upper-layer UDS fuzzing campaign:
 
 ```bash
-uv run udsfuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
+uv run fuzz --protocol uds --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
 ```
 
 Run an OBD-II fuzzing campaign:
 
 ```bash
-uv run obdfuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
+uv run fuzz --protocol obd --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
 ```
 
 Run a configurable private control protocol fuzzing campaign:
 
 ```bash
-uv run privatefuzz --interface pcan --channel PCAN_USBBUS1 --bitrate 500000 --target-ids 0x100,0x101 --opcodes 0x01,0x02,0x10
+uv run fuzz --protocol private --interface pcan --channel PCAN_USBBUS1 --bitrate 500000 --target-ids 0x100,0x101 --opcodes 0x01,0x02,0x10
 ```
 
 Examples for other python-can backends:
 
 ```bash
-uv run fuzz --interface slcan --channel COM3 --bitrate 500000
-uv run fuzz --interface vector --channel 0 --bitrate 500000
+uv run fuzz --protocol can --interface slcan --channel COM3 --bitrate 500000
+uv run fuzz --protocol can --interface vector --channel 0 --bitrate 500000
 ```
 
 ### Fuzzing with config file
@@ -94,7 +91,7 @@ The priority order is:
 2. config file values
 3. code defaults
 
-The configuration file can use top-level shared values and per-command sections. A single `config.toml` can therefore hold settings for multiple entrypoints:
+The configuration file can use top-level shared values and per-command sections. For fuzzing, put the protocol name in the `[fuzz]` section as `protocol = "can"`, `protocol = "uds"`, `protocol = "obd"`, or `protocol = "private"`.
 
 Command line options still override the config file, so you can keep the file as a base profile and adjust just one or two values per run.
 
@@ -125,6 +122,7 @@ uv run clean
 
 Important hardware options:
 
+- `--protocol`: choose `can`, `uds`, `obd`, or `private`.
 - `--interface`: python-can backend, such as `socketcan`, `pcan`, `vector`, or `slcan`.
 - `--channel`: backend-specific channel name.
 - `--bitrate`: arbitration bitrate. Use `none` if the selected backend does not require it.
@@ -133,10 +131,9 @@ Important hardware options:
 - `--id-min` and `--id-max`: limit the fuzzing arbitration ID range.
 - `--receive-timeout`: response collection window after each transmitted fuzzing frame.
 - `--inter-frame-delay-ms`: delay between generated fuzzing frames.
+- `--inter-request-delay-ms`: delay between protocol requests.
 - `--keepalive`: send a periodic activation frame in a background thread while fuzzing.
 - `--keepalive-id`, `--keepalive-payload`, `--keepalive-interval-ms`: configure the activation frame.
-- `udsfuzz` targets UDS / ISO-TP requests and keeps the CAN frame layer separate from the lower-level `fuzz` command.
-- `obdfuzz` targets OBD-II modes and PIDs over CAN and is separate from both `fuzz` and `udsfuzz`.
-- `privatefuzz` targets configurable private control IDs and opcodes over CAN and records target, opcode, payload strategy, and responses.
+- `--target-ids` and `--opcodes`: private protocol target IDs and opcodes.
 - `--passive-duration`: seconds to listen during scan before active probes.
 - `--active-timeout`: response collection window after each active scan probe.
