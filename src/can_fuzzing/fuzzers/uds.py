@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..adapters import CANHardwareAdapter
+from ..common.fuzzing_utils import (
+    decode_isotp_payload,
+    encode_isotp_single_frame,
+    random_bytes,
+    report_progress,
+    should_report_progress,
+)
 from ..models import CANFrame, FrameFormat, FrameType
 
 
@@ -180,8 +187,9 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
                     last_progress = now
                     report_progress(
                         progress_callback,
-                        config=config,
+                        campaign=config.campaign,
                         completed_cases=completed_cases,
+                        requested_cases=config.cases,
                         sent=sent,
                         faults=faults,
                         responses=responses,
@@ -192,14 +200,15 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
                     )
 
                 if config.inter_request_delay_ms > 0:
-                    sleep_seconds(config.inter_request_delay_ms / 1000.0)
+                    time.sleep(config.inter_request_delay_ms / 1000.0)
         except KeyboardInterrupt:
             interrupted = True
             fh.flush()
             report_progress(
                 progress_callback,
-                config=config,
+                campaign=config.campaign,
                 completed_cases=completed_cases,
+                requested_cases=config.cases,
                 sent=sent,
                 faults=faults,
                 responses=responses,
@@ -343,16 +352,6 @@ def build_malformed_payload(rng: random.Random, service_id: int) -> bytes:
     return bytes(payload[:7])
 
 
-def encode_isotp_single_frame(application_payload: bytes) -> bytes:
-    if len(application_payload) > 7:
-        raise ValueError("UDS request payload exceeds classic CAN ISO-TP single-frame capacity")
-    frame = bytearray([len(application_payload) & 0x0F])
-    frame.extend(application_payload)
-    while len(frame) < 8:
-        frame.append(0x00)
-    return bytes(frame)
-
-
 def summarize_responses(response_payloads: list[str], request_service: int) -> dict[str, object]:
     positive = 0
     negative = 0
@@ -391,22 +390,6 @@ def summarize_responses(response_payloads: list[str], request_service: int) -> d
         "nrcs": nrcs,
         "kind": kind,
     }
-
-
-def decode_isotp_payload(raw: bytes) -> tuple[str, bytes]:
-    if not raw:
-        return "empty", b""
-    pci_type = raw[0] >> 4
-    if pci_type == 0:
-        length = raw[0] & 0x0F
-        return "single_frame", raw[1 : 1 + length]
-    if pci_type == 1:
-        return "first_frame", raw[2:]
-    if pci_type == 2:
-        return "consecutive_frame", raw[1:]
-    if pci_type == 3:
-        return "flow_control", raw[1:]
-    return "unknown", raw
 
 
 def build_coverage_points(request: UDSRequest, response_summary: dict[str, object], observation) -> set[str]:
@@ -502,56 +485,6 @@ def write_summary(
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
-def should_report_progress(config: UDSFuzzConfig, completed_cases: int, now: float, last_progress: float) -> bool:
-    if completed_cases <= 0:
-        return False
-    if config.progress_interval > 0 and completed_cases % config.progress_interval == 0:
-        return True
-    if config.progress_seconds > 0 and now - last_progress >= config.progress_seconds:
-        return True
-    if completed_cases == config.cases:
-        return True
-    return False
-
-
-def report_progress(
-    progress_callback: Callable[[dict], None] | None,
-    config: UDSFuzzConfig,
-    completed_cases: int,
-    sent: int,
-    faults: int,
-    responses: int,
-    positive_responses: int,
-    negative_responses: int,
-    coverage_points: int,
-    interrupted: bool,
-) -> None:
-    if progress_callback is None:
-        return
-    progress_callback(
-        {
-            "campaign": config.campaign,
-            "completed_cases": completed_cases,
-            "requested_cases": config.cases,
-            "sent": sent,
-            "faults": faults,
-            "responses": responses,
-            "positive_responses": positive_responses,
-            "negative_responses": negative_responses,
-            "coverage_points": coverage_points,
-            "interrupted": interrupted,
-        }
-    )
-
-
-def random_bytes(rng: random.Random, length: int) -> bytes:
-    return bytes(rng.randrange(256) for _ in range(length))
-
-
 def random_did(rng: random.Random) -> bytes:
     did = rng.randrange(0x0000, 0xFFFF)
     return bytes([(did >> 8) & 0xFF, did & 0xFF])
-
-
-def sleep_seconds(seconds: float) -> None:
-    time.sleep(seconds)

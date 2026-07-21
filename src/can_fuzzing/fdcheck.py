@@ -17,7 +17,10 @@ class FDCheckConfig:
     interface: str
     channel: str
     bitrate: int | None = 500000
-    data_bitrate: int | None = None
+    data_bitrate: int | None = 2000000
+    fd_clock: int = 80000000
+    nominal_sample_point: float = 87.5
+    data_sample_point: float = 80.0
     output_dir: Path = Path("result")
     campaign: str = "can_fd_check"
     probe_timeout: float = 0.15
@@ -68,15 +71,28 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
     target_fd_status = "not_run"
     rows: list[FDProbeRow] = []
     response_count = 0
-
+    fd_timing = None
+    fd_timing_error = ""
     try:
+        fd_timing = build_fd_timing(config)
+    except ValueError as exc:
+        fd_timing_error = str(exc)
+    adapter_timing = fd_timing if config.interface == "pcan" else None
+    adapter_data_bitrate = None if adapter_timing is not None else config.data_bitrate
+
+    if config.interface == "pcan" and fd_timing is None:
+        hardware_error = f"PCAN CAN FD requires valid bit timing. {fd_timing_error}"
+    try:
+        if hardware_error:
+            raise SkipFDOpen
         with CANHardwareAdapter(
             interface=config.interface,
             channel=config.channel,
             bitrate=config.bitrate,
             receive_timeout=config.probe_timeout,
             fd=True,
-            data_bitrate=config.data_bitrate,
+            data_bitrate=adapter_data_bitrate,
+            timing=adapter_timing,
         ) as adapter:
             hardware_fd_opened = True
             probes = build_fd_probes(config)
@@ -118,6 +134,8 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
                     time.sleep(config.probe_delay_ms / 1000.0)
     except KeyboardInterrupt:
         interrupted = True
+    except SkipFDOpen:
+        pass
     except CANConnectionError as exc:
         hardware_error = str(exc)
         if backend_reports_fd_support is None:
@@ -129,7 +147,7 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
     csv_path.write_text("", encoding="utf-8")
     write_probe_csv(csv_path, rows)
 
-    hardware_fd_supported = bool(hardware_fd_opened and (backend_reports_fd_support is not False))
+    hardware_fd_supported = hardware_fd_opened
     summary = {
         "campaign": config.campaign,
         "status": "interrupted" if interrupted else "completed",
@@ -138,6 +156,11 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
         "channel": config.channel,
         "bitrate": config.bitrate,
         "data_bitrate": config.data_bitrate,
+        "fd_clock": config.fd_clock,
+        "nominal_sample_point": config.nominal_sample_point,
+        "data_sample_point": config.data_sample_point,
+        "fd_timing": str(fd_timing) if fd_timing is not None else "",
+        "fd_timing_error": fd_timing_error,
         "backend_reports_fd_support": backend_reports_fd_support,
         "hardware_fd_opened": hardware_fd_opened,
         "hardware_fd_supported": hardware_fd_supported,
@@ -183,7 +206,34 @@ def detect_backend_fd_support(interface: str, channel: str) -> bool | None:
     return None
 
 
+def build_fd_timing(config: FDCheckConfig):
+    if config.bitrate is None:
+        raise ValueError("--bitrate is required for CAN FD timing generation")
+    if config.data_bitrate is None:
+        raise ValueError("--data-bitrate is required for CAN FD timing generation")
+    try:
+        from can import BitTimingFd
+    except ImportError as exc:
+        raise ValueError("python-can is required for CAN FD timing generation") from exc
+    try:
+        return BitTimingFd.from_sample_point(
+            f_clock=config.fd_clock,
+            nom_bitrate=config.bitrate,
+            nom_sample_point=config.nominal_sample_point,
+            data_bitrate=config.data_bitrate,
+            data_sample_point=config.data_sample_point,
+        )
+    except ValueError as exc:
+        raise ValueError(f"invalid CAN FD timing parameters: {exc}") from exc
+
+
+class SkipFDOpen(Exception):
+    pass
+
+
 def hardware_status_text(backend_reports_fd_support: bool | None, hardware_fd_opened: bool) -> str:
+    if hardware_fd_opened and backend_reports_fd_support is False:
+        return "opened_despite_backend_report"
     if hardware_fd_opened and backend_reports_fd_support is not False:
         return "supported"
     if backend_reports_fd_support is False:

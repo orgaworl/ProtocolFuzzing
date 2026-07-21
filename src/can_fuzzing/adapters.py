@@ -48,6 +48,7 @@ class CANHardwareAdapter:
         receive_timeout: float = 0.05,
         fd: bool = False,
         data_bitrate: int | None = None,
+        timing: Any | None = None,
     ) -> None:
         self.interface = interface
         self.channel = channel
@@ -55,6 +56,7 @@ class CANHardwareAdapter:
         self.receive_timeout = receive_timeout
         self.fd = fd
         self.data_bitrate = data_bitrate
+        self.timing = timing
         self._bus: Any = None
         self._io_lock = threading.RLock()
 
@@ -80,6 +82,8 @@ class CANHardwareAdapter:
             kwargs["bitrate"] = self.bitrate
         if self.fd:
             kwargs["fd"] = True
+        if self.timing is not None:
+            kwargs["timing"] = self.timing
         if self.data_bitrate is not None:
             kwargs["data_bitrate"] = self.data_bitrate
 

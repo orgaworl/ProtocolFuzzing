@@ -212,6 +212,17 @@ def build_summary(
         "active_probes": len(active_rows),
         "active_responses": sum(int(row["response_count"]) for row in active_rows),
         "suspected_diagnostic_response_ids": [f"0x{value:x}" for value in response_ids],
+        "observed_objects": [
+            {
+                "id": f"0x{stats.arbitration_id:x}",
+                "count": stats.count,
+                "first_seen": f"{stats.first_seen:.6f}",
+                "last_seen": f"{stats.last_seen:.6f}",
+                "dlcs": ";".join(str(value) for value in sorted(stats.dlcs)),
+                "samples": ";".join(stats.samples),
+            }
+            for stats in sorted(id_stats.values(), key=lambda item: item.arbitration_id)
+        ],
         "ids_csv_path": str(ids_csv_path),
         "active_csv_path": str(active_csv_path),
     }

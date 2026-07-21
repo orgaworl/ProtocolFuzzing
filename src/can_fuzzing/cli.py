@@ -322,6 +322,7 @@ def run_scan_from_args(args: argparse.Namespace) -> None:
     print(f"diagnostic_response_ids={','.join(summary['suspected_diagnostic_response_ids']) or 'none'}")
     print(f"ids_csv={summary['ids_csv_path']}")
     print(f"active_csv={summary['active_csv_path']}")
+    print_scan_objects_table(summary.get("observed_objects", []))
 
 
 def run_fdcheck_from_args(args: argparse.Namespace) -> None:
@@ -330,13 +331,17 @@ def run_fdcheck_from_args(args: argparse.Namespace) -> None:
         channel=args.channel,
         bitrate=args.bitrate,
         data_bitrate=args.data_bitrate,
+        fd_clock=args.fd_clock,
+        nominal_sample_point=args.nominal_sample_point,
+        data_sample_point=args.data_sample_point,
         output_dir=Path(args.output_dir),
         campaign=args.campaign,
         probe_timeout=args.probe_timeout,
         probe_delay_ms=args.probe_delay_ms,
     )
     print(
-        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} fd=True",
+        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
+        f"data_bitrate={config.data_bitrate} fd_clock={config.fd_clock} fd=True",
         flush=True,
     )
     try:
@@ -675,7 +680,10 @@ def add_fdcheck_arguments(parser: argparse.ArgumentParser) -> None:
     required.add_argument("--interface", required=True, help="python-can interface, for example pcan, vector, slcan, socketcan")
     required.add_argument("--channel", required=True, help="CAN channel name used by the selected python-can interface")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
-    optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
+    optional.add_argument("--data-bitrate", type=parse_optional_int, default=2000000, help="CAN FD data-phase bitrate")
+    optional.add_argument("--fd-clock", type=int, default=80000000, help="CAN FD controller clock in Hz")
+    optional.add_argument("--nominal-sample-point", type=float, default=87.5, help="CAN FD nominal-phase sample point in percent")
+    optional.add_argument("--data-sample-point", type=float, default=80.0, help="CAN FD data-phase sample point in percent")
     optional.add_argument("--campaign", default="can_fd_check", help="campaign name used for output files")
     optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON results")
     optional.add_argument("--probe-timeout", type=float, default=0.15, help="seconds to wait for responses after each FD probe")
@@ -819,6 +827,34 @@ def print_interface_table(configs: list[dict[str, Any]]) -> None:
     for row in rows:
         for index, value in enumerate(row):
             widths[index] = max(widths[index], len(value))
+    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+
+
+def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
+    if not objects:
+        print("No CAN communication objects detected.")
+        return
+
+    headers = ["id", "count", "first_seen", "last_seen", "dlcs", "samples"]
+    rows = [
+        [
+            str(item.get("id", "")),
+            str(item.get("count", "")),
+            str(item.get("first_seen", "")),
+            str(item.get("last_seen", "")),
+            str(item.get("dlcs", "")),
+            str(item.get("samples", "")),
+        ]
+        for item in objects
+    ]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+    print("scan objects:")
     print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
     print("  ".join("-" * width for width in widths))
     for row in rows:
