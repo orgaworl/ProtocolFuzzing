@@ -12,6 +12,7 @@ from .adapters import CANConnectionError
 from .discovery import DEFAULT_DISCOVERY_INTERFACES, list_can_interfaces
 from .fdcheck import FDCheckConfig, run_fdcheck
 from .plotting import plot_results
+from .common import console
 from .common.keepalive import KeepaliveConfig, KeepaliveWorker
 from .fuzzers.obd import OBDFuzzConfig, run_obd_fuzzing
 from .fuzzers.private_control import PrivateFuzzConfig, run_private_fuzzing
@@ -201,13 +202,13 @@ def run_fuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
-    print(
+    console.info(
         f"opening interface={config.interface} channel={config.channel} "
         f"bitrate={config.bitrate} cases={config.cases}",
         flush=True,
     )
     if config.keepalive:
-        print(
+        console.debug(
             f"keepalive=id=0x{config.keepalive_id:x} interval={config.keepalive_interval_ms}ms "
             f"format={'extended' if config.keepalive_extended else 'standard'} fd={config.keepalive_fd}",
             flush=True,
@@ -218,18 +219,19 @@ def run_fuzz_from_args(args: argparse.Namespace) -> None:
         else:
             result = run_fuzzing_with_tqdm(config)
     except CANConnectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console.error(f"error: {exc}")
         raise SystemExit(2) from exc
-    print(f"campaign={result.campaign}")
-    print(f"status={'interrupted' if result.interrupted else 'completed'}")
-    print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    print(f"coverage_points={result.coverage_points} unique_reasons={result.unique_reasons}")
+    console.info(f"campaign={result.campaign}")
+    print_status_line(result.interrupted)
+    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
+    console.debug(f"coverage_points={result.coverage_points} unique_reasons={result.unique_reasons}")
     if config.keepalive:
-        print(f"keepalive_sent={result.keepalive_sent} keepalive_errors={result.keepalive_errors}")
+        keepalive_level = "warning" if result.keepalive_errors else "debug"
+        console.log(f"keepalive_sent={result.keepalive_sent} keepalive_errors={result.keepalive_errors}", keepalive_level)
         if result.keepalive_errors:
-            print(f"keepalive_last_error={result.keepalive_last_error}")
-    print(f"csv={result.csv_path}")
-    print(f"summary={result.summary_path}")
+            console.warning(f"keepalive_last_error={result.keepalive_last_error}")
+    console.info(f"csv={result.csv_path}")
+    console.info(f"summary={result.summary_path}")
 
 def run_fuzzing_with_tqdm(config: FuzzConfig):
     from tqdm import tqdm
@@ -256,13 +258,13 @@ def run_fuzzing_with_tqdm(config: FuzzConfig):
 def run_plot_from_args(args: argparse.Namespace) -> None:
     outputs = plot_results(Path(args.input), Path(args.output_dir))
     for output in outputs:
-        print(f"wrote={output}")
+        console.info(f"wrote={output}")
 
 
 def run_clean_from_args(args: argparse.Namespace) -> None:
     clean_directory(Path(args.result_dir))
     clean_directory(Path(args.plot_dir))
-    print(f"cleaned={args.result_dir},{args.plot_dir}")
+    console.info(f"cleaned={args.result_dir},{args.plot_dir}")
 
 
 def run_list_from_args(args: argparse.Namespace) -> None:
@@ -274,7 +276,7 @@ def run_list_from_args(args: argparse.Namespace) -> None:
             verbose=args.verbose,
         )
     except RuntimeError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console.error(f"error: {exc}")
         raise SystemExit(2) from exc
     if args.json:
         print(json.dumps(configs, indent=2, default=str))
@@ -302,7 +304,7 @@ def run_scan_from_args(args: argparse.Namespace) -> None:
         physical_start=args.physical_start,
         physical_end=args.physical_end,
     )
-    print(
+    console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
         f"passive={config.passive} active={config.active}",
         flush=True,
@@ -313,15 +315,19 @@ def run_scan_from_args(args: argparse.Namespace) -> None:
         else:
             summary = run_scan_with_tqdm(config)
     except CANConnectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console.error(f"error: {exc}")
         raise SystemExit(2) from exc
-    print(f"campaign={summary['campaign']}")
-    print(f"status={summary['status']}")
-    print(f"unique_ids={summary['unique_ids']} total_frames={summary['total_frames_observed']}")
-    print(f"active_probes={summary['active_probes']} active_responses={summary['active_responses']}")
-    print(f"diagnostic_response_ids={','.join(summary['suspected_diagnostic_response_ids']) or 'none'}")
-    print(f"ids_csv={summary['ids_csv_path']}")
-    print(f"active_csv={summary['active_csv_path']}")
+    console.info(f"campaign={summary['campaign']}")
+    print_status_value(str(summary["status"]))
+    console.info(f"unique_ids={summary['unique_ids']} total_frames={summary['total_frames_observed']}")
+    console.debug(f"active_probes={summary['active_probes']} active_responses={summary['active_responses']}")
+    diagnostic_ids = ','.join(summary['suspected_diagnostic_response_ids']) or 'none'
+    if diagnostic_ids == "none":
+        console.warning(f"diagnostic_response_ids={diagnostic_ids}")
+    else:
+        console.debug(f"diagnostic_response_ids={diagnostic_ids}")
+    console.info(f"ids_csv={summary['ids_csv_path']}")
+    console.info(f"active_csv={summary['active_csv_path']}")
     print_scan_objects_table(summary.get("observed_objects", []))
 
 
@@ -339,7 +345,7 @@ def run_fdcheck_from_args(args: argparse.Namespace) -> None:
         probe_timeout=args.probe_timeout,
         probe_delay_ms=args.probe_delay_ms,
     )
-    print(
+    console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
         f"data_bitrate={config.data_bitrate} fd_clock={config.fd_clock} fd=True",
         flush=True,
@@ -350,20 +356,20 @@ def run_fdcheck_from_args(args: argparse.Namespace) -> None:
         else:
             result = run_fdcheck_with_tqdm(config)
     except CANConnectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console.error(f"error: {exc}")
         raise SystemExit(2) from exc
-    print(f"campaign={result.campaign}")
-    print(f"status={'interrupted' if result.interrupted else 'completed'}")
-    print(f"hardware_fd_supported={format_bool(result.hardware_fd_supported)}")
-    print(f"hardware_fd_opened={format_bool(result.hardware_fd_opened)}")
-    print(f"hardware_fd_status={result.hardware_fd_status}")
+    console.info(f"campaign={result.campaign}")
+    print_status_line(result.interrupted)
+    console.log(f"hardware_fd_supported={format_bool(result.hardware_fd_supported)}", "debug" if result.hardware_fd_supported else "warning")
+    console.log(f"hardware_fd_opened={format_bool(result.hardware_fd_opened)}", "debug" if result.hardware_fd_opened else "warning")
+    console.log(f"hardware_fd_status={result.hardware_fd_status}", status_level(result.hardware_fd_status))
     if result.hardware_error:
-        print(f"hardware_error={result.hardware_error}")
-    print(f"target_fd_supported={format_bool(result.target_fd_supported)}")
-    print(f"target_fd_status={result.target_fd_status}")
-    print(f"probe_count={result.probe_count} response_count={result.response_count}")
-    print(f"csv={result.csv_path}")
-    print(f"summary={result.summary_path}")
+        console.error(f"hardware_error={result.hardware_error}")
+    console.log(f"target_fd_supported={format_bool(result.target_fd_supported)}", "debug" if result.target_fd_supported else "warning")
+    console.log(f"target_fd_status={result.target_fd_status}", status_level(result.target_fd_status))
+    console.info(f"probe_count={result.probe_count} response_count={result.response_count}")
+    console.info(f"csv={result.csv_path}")
+    console.info(f"summary={result.summary_path}")
 
 
 def run_udsfuzz_from_args(args: argparse.Namespace) -> None:
@@ -386,7 +392,7 @@ def run_udsfuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
-    print(
+    console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
         flush=True,
     )
@@ -396,15 +402,15 @@ def run_udsfuzz_from_args(args: argparse.Namespace) -> None:
         else:
             result = run_uds_fuzzing_with_tqdm(config)
     except CANConnectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console.error(f"error: {exc}")
         raise SystemExit(2) from exc
-    print(f"campaign={result.campaign}")
-    print(f"status={'interrupted' if result.interrupted else 'completed'}")
-    print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    print(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses} multi_frame_responses={result.multi_frame_responses}")
-    print(f"unique_services={result.unique_services} unique_nrcs={result.unique_nrcs}")
-    print(f"csv={result.csv_path}")
-    print(f"summary={result.summary_path}")
+    console.info(f"campaign={result.campaign}")
+    print_status_line(result.interrupted)
+    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
+    console.debug(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses} multi_frame_responses={result.multi_frame_responses}")
+    console.debug(f"unique_services={result.unique_services} unique_nrcs={result.unique_nrcs}")
+    console.info(f"csv={result.csv_path}")
+    console.info(f"summary={result.summary_path}")
 
 
 def run_obdfuzz_from_args(args: argparse.Namespace) -> None:
@@ -427,7 +433,7 @@ def run_obdfuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
-    print(
+    console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
         flush=True,
     )
@@ -437,15 +443,15 @@ def run_obdfuzz_from_args(args: argparse.Namespace) -> None:
         else:
             result = run_obd_fuzzing_with_tqdm(config)
     except CANConnectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console.error(f"error: {exc}")
         raise SystemExit(2) from exc
-    print(f"campaign={result.campaign}")
-    print(f"status={'interrupted' if result.interrupted else 'completed'}")
-    print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    print(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses}")
-    print(f"unique_modes={result.unique_modes} unique_pids={result.unique_pids}")
-    print(f"csv={result.csv_path}")
-    print(f"summary={result.summary_path}")
+    console.info(f"campaign={result.campaign}")
+    print_status_line(result.interrupted)
+    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
+    console.debug(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses}")
+    console.debug(f"unique_modes={result.unique_modes} unique_pids={result.unique_pids}")
+    console.info(f"csv={result.csv_path}")
+    console.info(f"summary={result.summary_path}")
 
 
 def run_obd_fuzzing_with_tqdm(config: OBDFuzzConfig):
@@ -495,7 +501,7 @@ def run_privatefuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
-    print(
+    console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} targets={len(config.target_ids)} opcodes={len(config.opcodes)}",
         flush=True,
     )
@@ -505,14 +511,14 @@ def run_privatefuzz_from_args(args: argparse.Namespace) -> None:
         else:
             result = run_private_fuzzing_with_tqdm(config)
     except CANConnectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console.error(f"error: {exc}")
         raise SystemExit(2) from exc
-    print(f"campaign={result.campaign}")
-    print(f"status={'interrupted' if result.interrupted else 'completed'}")
-    print(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    print(f"unique_targets={result.unique_targets} unique_opcodes={result.unique_opcodes} coverage_points={result.coverage_points}")
-    print(f"csv={result.csv_path}")
-    print(f"summary={result.summary_path}")
+    console.info(f"campaign={result.campaign}")
+    print_status_line(result.interrupted)
+    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
+    console.debug(f"unique_targets={result.unique_targets} unique_opcodes={result.unique_opcodes} coverage_points={result.coverage_points}")
+    console.info(f"csv={result.csv_path}")
+    console.info(f"summary={result.summary_path}")
 
 
 def run_private_fuzzing_with_tqdm(config: PrivateFuzzConfig):
@@ -819,7 +825,7 @@ def clean_directory(path: Path) -> None:
 
 def print_interface_table(configs: list[dict[str, Any]]) -> None:
     if not configs:
-        print("No CAN interfaces detected.")
+        console.warning("No CAN interfaces detected.")
         return
     rows = [format_interface_row(config) for config in configs]
     headers = ["interface", "channel", "device", "fd", "condition"]
@@ -827,15 +833,15 @@ def print_interface_table(configs: list[dict[str, Any]]) -> None:
     for row in rows:
         for index, value in enumerate(row):
             widths[index] = max(widths[index], len(value))
-    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
-    print("  ".join("-" * width for width in widths))
+    console.debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    console.debug("  ".join("-" * width for width in widths))
     for row in rows:
-        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+        console.debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
 
 def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
     if not objects:
-        print("No CAN communication objects detected.")
+        console.warning("No CAN communication objects detected.")
         return
 
     headers = ["id", "count", "first_seen", "last_seen", "dlcs", "samples"]
@@ -854,11 +860,11 @@ def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
     for row in rows:
         for index, value in enumerate(row):
             widths[index] = max(widths[index], len(value))
-    print("scan objects:")
-    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
-    print("  ".join("-" * width for width in widths))
+    console.debug("scan objects:")
+    console.debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    console.debug("  ".join("-" * width for width in widths))
     for row in rows:
-        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+        console.debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
 
 def format_interface_row(config: dict[str, Any]) -> list[str]:
@@ -892,6 +898,24 @@ def format_condition(config: dict[str, Any]) -> str:
     if condition is None:
         return ""
     return str(condition)
+
+
+def print_status_line(interrupted: bool) -> None:
+    status = "interrupted" if interrupted else "completed"
+    print_status_value(status)
+
+
+def print_status_value(status: str) -> None:
+    console.log(f"status={status}", status_level(status))
+
+
+def status_level(status: str) -> str:
+    lowered = status.lower()
+    if "error" in lowered or "failed" in lowered or "fail" in lowered:
+        return "error"
+    if lowered in {"interrupted", "not_run", "no_response"} or "warning" in lowered:
+        return "warning"
+    return "normal"
 
 
 
