@@ -49,6 +49,7 @@ class CANHardwareAdapter:
         fd: bool = False,
         data_bitrate: int | None = None,
         timing: Any | None = None,
+        check_message: bool = True,
     ) -> None:
         self.interface = interface
         self.channel = channel
@@ -57,6 +58,7 @@ class CANHardwareAdapter:
         self.fd = fd
         self.data_bitrate = data_bitrate
         self.timing = timing
+        self.check_message = check_message
         self._bus: Any = None
         self._io_lock = threading.RLock()
 
@@ -186,14 +188,14 @@ class CANHardwareAdapter:
             latency_ms=latency,
         )
 
-    def send_frame(self, frame: CANFrame, is_fd: bool | None = None) -> None:
+    def send_frame(self, frame: CANFrame, is_fd: bool | None = None, check_message: bool | None = None) -> None:
         if self._bus is None:
             raise RuntimeError("CAN bus is not open")
         try:
             import can
         except ImportError as exc:
             raise RuntimeError("python-can is required for real CAN device testing") from exc
-        message = self._build_message(frame, is_fd=self.fd if is_fd is None else is_fd)
+        message = self._build_message(frame, is_fd=self.fd if is_fd is None else is_fd, check_message=check_message)
         with self._io_lock:
             quiet_call(self._bus.send, message)
 
@@ -212,7 +214,7 @@ class CANHardwareAdapter:
             if msg is None:
                 return
 
-    def _build_message(self, frame: CANFrame, is_fd: bool | None = None):
+    def _build_message(self, frame: CANFrame, is_fd: bool | None = None, check_message: bool | None = None):
         try:
             import can
         except ImportError as exc:
@@ -224,7 +226,7 @@ class CANHardwareAdapter:
             is_remote_frame=frame.frame_type == FrameType.REMOTE,
             is_error_frame=frame.frame_type == FrameType.ERROR,
             is_fd=self.fd if is_fd is None else is_fd,
-            check=True,
+            check=self.check_message if check_message is None else check_message,
         )
 
 

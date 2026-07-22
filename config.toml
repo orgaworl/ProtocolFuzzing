@@ -22,6 +22,7 @@ progress_seconds = 1.0
 no_progress = false
 
 [keepalive]
+preset = "tester-present"
 bitrate = 500000
 data_bitrate = 2000000
 arbitration_id = 0x7df
@@ -29,6 +30,9 @@ payload = "02 3E 00"
 interval_ms = 500.0
 format = "standard"
 fd = false
+listen = true
+listen_timeout = 0.05
+check_message = true
 
 [fdcheck]
 campaign = "can_fd_check"

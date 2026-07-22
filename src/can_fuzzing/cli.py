@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .adapters import CANConnectionError
+from .adapters import CANConnectionError, CANHardwareAdapter
 from .common import console
 from .common.config import (
     extract_config_path,
@@ -27,6 +27,37 @@ from .fuzzers.private_control import PrivateFuzzConfig, run_private_fuzzing
 from .fuzzers.uds import UDSFuzzConfig, run_uds_fuzzing
 from .plotting import plot_results
 from .scanner import ScanConfig, run_scan
+
+
+KEEPALIVE_PRESETS: dict[str, dict[str, Any]] = {
+    "tester-present": {
+        "arbitration_id": 0x7DF,
+        "payload": "02 3E 00",
+        "fd": False,
+        "format": "standard",
+        "listen": True,
+        "listen_timeout": 0.05,
+        "check_message": True,
+    },
+    "ff-fd-no-response": {
+        "arbitration_id": 0xFFFFFFFF,
+        "payload": "FF FF FF FF FF FF FF FF",
+        "fd": True,
+        "format": "extended",
+        "listen": False,
+        "listen_timeout": 0.05,
+        "check_message": False,
+    },
+    "ff-classic-response": {
+        "arbitration_id": 0xFFFFFFFF,
+        "payload": "FF FF FF FF FF FF FF FF",
+        "fd": False,
+        "format": "extended",
+        "listen": True,
+        "listen_timeout": 0.05,
+        "check_message": False,
+    },
+}
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     def _get_help_string(self, action: argparse.Action) -> str:
         help_text = action.help or ""
@@ -82,6 +113,15 @@ def normalize_protocol(value: str | None) -> str | None:
     return FUZZ_PROTOCOL_ALIASES.get(token, token)
 
 
+def normalize_keepalive_preset(value: str | None) -> str | None:
+    if value is None:
+        return None
+    token = str(value).strip().lower().replace("_", "-")
+    if not token:
+        return None
+    return token if token in KEEPALIVE_PRESETS else None
+
+
 def parse_protocol(value: str) -> str:
     normalized = normalize_protocol(value)
     if normalized in {"can", "uds", "obd", "private"}:
@@ -123,7 +163,9 @@ def parse_fuzz_args_with_config(parser: argparse.ArgumentParser, argv: list[str]
 def parse_keepalive_args_with_config(parser: argparse.ArgumentParser, argv: list[str] | None = None) -> argparse.Namespace:
     argv = list(sys.argv[1:] if argv is None else argv)
     config_path = extract_config_path(argv)
+    cli_preset = extract_keepalive_preset(argv)
     defaults: dict[str, Any] = {}
+    config_preset: str | None = None
 
     if config_path is not None:
         raw_config = read_toml_config(config_path)
@@ -131,10 +173,25 @@ def parse_keepalive_args_with_config(parser: argparse.ArgumentParser, argv: list
         if bitrate is not None:
             defaults["bitrate"] = parse_optional_int(str(bitrate))
         defaults.update(load_section_defaults_from_config(parser, raw_config, "keepalive"))
+        config_preset = normalize_keepalive_preset(defaults.get("preset"))
+
+    base_preset = cli_preset or config_preset or "tester-present"
+    preset_defaults = dict(KEEPALIVE_PRESETS[base_preset])
+    preset_defaults.update(defaults)
+    defaults = preset_defaults
+    defaults["preset"] = cli_preset or config_preset or base_preset
 
     parser.set_defaults(**defaults)
     args = parser.parse_args(argv)
+    args.preset = normalize_keepalive_preset(getattr(args, "preset", None)) or "tester-present"
     return args
+
+
+def extract_keepalive_preset(argv: list[str]) -> str | None:
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--preset")
+    known, _ = pre_parser.parse_known_args(argv)
+    return normalize_keepalive_preset(known.preset)
 
 
 def fuzz_main() -> None:
@@ -403,10 +460,13 @@ def run_keepalive_from_args(args: argparse.Namespace) -> None:
         interval_ms=args.interval_ms,
         extended=args.format == "extended",
         fd=args.fd,
+        listen=args.listen,
+        listen_timeout=args.listen_timeout,
+        check_message=args.check_message,
     )
     console.info(
         f"opening interface={interface} channel={channel} bitrate={args.bitrate} "
-        f"interval={config.interval_ms}ms id=0x{config.arbitration_id:x}",
+        f"interval={config.interval_ms}ms id=0x{config.arbitration_id:x} preset={args.preset}",
         flush=True,
     )
     try:
@@ -417,22 +477,37 @@ def run_keepalive_from_args(args: argparse.Namespace) -> None:
             receive_timeout=0.05,
             fd=args.fd,
             data_bitrate=args.data_bitrate,
+            check_message=args.check_message,
         ) as adapter:
-            worker = KeepaliveWorker(adapter, config)
+            worker = KeepaliveWorker(adapter, config, response_callback=log_keepalive_response)
             worker.start()
             console.info("keepalive running; press Ctrl+C to stop", flush=True)
             try:
-                while True:
+                while worker.is_alive():
                     time.sleep(1.0)
             except KeyboardInterrupt:
-                stats = worker.stop()
+                console.warning("keepalive interrupted by Ctrl+C; saving current results")
+            stats = worker.stop()
     except CANConnectionError as exc:
         console.error(f"error: {exc}")
         raise SystemExit(2) from exc
     else:
         console.info(f"keepalive_sent={stats.sent} keepalive_errors={stats.errors}")
+        console.info(f"keepalive_responses={stats.responses}")
+        if stats.response_ids:
+            console.info("keepalive_response_ids=" + ",".join(f"0x{value:x}" for value in stats.response_ids))
+        if stats.response_payloads:
+            console.info("keepalive_response_payloads=" + ",".join(stats.response_payloads))
         if stats.errors:
             console.warning(f"keepalive_last_error={stats.last_error}")
+
+
+def log_keepalive_response(message: Any) -> None:
+    payload = bytes(getattr(message, "data", b""))
+    console.info(
+        f"keepalive_response id=0x{int(getattr(message, 'arbitration_id', 0)):x} "
+        f"dlc={len(payload)} data={payload.hex()}"
+    )
 
 
 def run_plot_from_args(args: argparse.Namespace) -> None:
@@ -935,15 +1010,19 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
 def add_keepalive_arguments(parser: argparse.ArgumentParser) -> None:
     optional = parser.add_argument_group("optional arguments")
     add_config_argument(optional)
+    optional.add_argument("--preset", choices=sorted(KEEPALIVE_PRESETS), default="tester-present", help="activation frame preset")
     optional.add_argument("--interface", default=None, help="python-can interface, for example pcan, vector, slcan, socketcan; if omitted, interfaces are discovered automatically")
     optional.add_argument("--channel", default=None, help="CAN channel name used by the selected python-can interface; if omitted, interfaces are discovered automatically")
     optional.add_argument("--bitrate", type=parse_optional_int, default=500000, help="arbitration bitrate; use none if backend does not need it")
     optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
-    optional.add_argument("--fd", action="store_true", default=False, help="send the activation frame as CAN FD")
+    optional.add_argument("--fd", action=argparse.BooleanOptionalAction, default=False, help="send the activation frame as CAN FD")
     optional.add_argument("--arbitration-id", type=parse_int, default=0x7DF, help="arbitration ID for the periodic activation frame")
     optional.add_argument("--payload", default="02 3E 00", help="hex payload for the periodic activation frame")
     optional.add_argument("--interval-ms", type=float, default=500.0, help="delay between activation frames")
     optional.add_argument("--format", choices=["standard", "extended"], default="standard", help="frame format for the activation frame")
+    optional.add_argument("--listen", action=argparse.BooleanOptionalAction, default=True, help="listen for responses after each activation frame")
+    optional.add_argument("--listen-timeout", type=float, default=0.05, help="seconds to wait for activation responses")
+    optional.add_argument("--check-message", action=argparse.BooleanOptionalAction, default=True, help="validate CAN messages before sending")
 
 
 def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1216,13 +1295,4 @@ def status_level(status: str) -> str:
     if lowered in {"interrupted", "not_run", "no_response"} or "warning" in lowered:
         return "warning"
     return "normal"
-
-
-
-
-
-
-
-
-
 
