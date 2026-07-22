@@ -105,6 +105,28 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                 responses += observation.response_count
                 reasons.add(observation.reason)
                 coverage.update(classify_coverage(frame, observation))
+                report_progress(
+                    progress_callback,
+                    event="can_exchange",
+                    protocol="can",
+                    case_id=case_id,
+                    total_cases=config.cases,
+                    tx_id=frame.identifier,
+                    tx_payload=frame.to_hex_payload(),
+                    tx_dlc=frame.dlc,
+                    tx_format=frame.frame_format.value,
+                    tx_type=frame.frame_type.value,
+                    fd=config.fd,
+                    sent=observation.sent,
+                    fault=observation.fault,
+                    state=observation.state,
+                    reason=observation.reason,
+                    response_count=observation.response_count,
+                    response_ids=observation.response_ids,
+                    response_payloads=observation.response_payloads,
+                    latency_ms=observation.latency_ms,
+                    error=observation.error,
+                )
 
                 writer.writerow(
                     {
@@ -335,4 +357,3 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-

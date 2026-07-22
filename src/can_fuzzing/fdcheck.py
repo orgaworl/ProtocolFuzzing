@@ -129,7 +129,7 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
                     if target_fd_status != "response_observed":
                         target_fd_status = "send_error"
                 rows.append(row)
-                report_progress(progress_callback, index, total, target_fd_supported)
+                report_progress(progress_callback, index, total, target_fd_supported, probe, row)
                 if config.probe_delay_ms > 0:
                     time.sleep(config.probe_delay_ms / 1000.0)
     except KeyboardInterrupt:
@@ -308,14 +308,45 @@ def write_probe_csv(path: Path, rows: list[FDProbeRow]) -> None:
             )
 
 
-def report_progress(progress_callback, completed: int, total: int, target_fd_supported: bool) -> None:
+def report_progress(progress_callback, completed: int, total: int, target_fd_supported: bool, probe: CANFrame | None = None, row: FDProbeRow | None = None) -> None:
     if progress_callback is None:
         return
-    progress_callback(
-        {
-            "phase": "fdcheck",
-            "completed": completed,
-            "total": total,
-            "target_fd_supported": target_fd_supported,
-        }
-    )
+    snapshot = {
+        "phase": "fdcheck",
+        "completed": completed,
+        "total": total,
+        "target_fd_supported": target_fd_supported,
+    }
+    if probe is not None and row is not None:
+        snapshot.update(
+            {
+                "event": "can_exchange",
+                "protocol": "fdcheck",
+                "probe_index": completed,
+                "total_probes": total,
+                "tx_id": probe.identifier,
+                "tx_payload": probe.to_hex_payload(),
+                "tx_dlc": probe.dlc,
+                "tx_format": probe.frame_format.value,
+                "tx_type": probe.frame_type.value,
+                "fd": True,
+                "sent": row.error == "",
+                "fault": bool(row.error),
+                "state": "response" if row.response_count else "send_error" if row.error else "no_response",
+                "reason": "send_error" if row.error else "response_received" if row.response_count else "no_response",
+                "response_count": row.response_count,
+                "response_ids": parse_hex_id_list(row.response_ids),
+                "response_payloads": split_payload_list(row.response_payloads),
+                "latency_ms": 0.0,
+                "error": row.error,
+            }
+        )
+    progress_callback(snapshot)
+
+
+def parse_hex_id_list(value: str) -> list[int]:
+    return [int(item, 0) for item in value.split(";") if item]
+
+
+def split_payload_list(value: str) -> list[str]:
+    return [item for item in value.split(";") if item]

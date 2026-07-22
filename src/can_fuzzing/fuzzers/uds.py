@@ -136,6 +136,33 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
                 services_seen.add(request.service_name)
                 nrcs_seen.update(response_summary["nrcs"])
                 coverage.update(build_coverage_points(request, response_summary, observation))
+                report_progress(
+                    progress_callback,
+                    event="can_exchange",
+                    protocol="uds",
+                    case_id=case_id,
+                    total_cases=config.cases,
+                    tx_id=frame.identifier,
+                    tx_payload=frame.to_hex_payload(),
+                    tx_dlc=frame.dlc,
+                    tx_format=frame.frame_format.value,
+                    tx_type=frame.frame_type.value,
+                    fd=False,
+                    sent=observation.sent,
+                    fault=observation.fault,
+                    state=observation.state,
+                    reason=observation.reason,
+                    response_count=observation.response_count,
+                    response_ids=observation.response_ids,
+                    response_payloads=observation.response_payloads,
+                    latency_ms=observation.latency_ms,
+                    error=observation.error,
+                    request_mode=request.request_mode,
+                    service_id=request.service_id,
+                    service_name=request.service_name,
+                    application_payload=request.application_payload.hex(),
+                    response_kind=response_summary["kind"],
+                )
 
                 writer.writerow(
                     {
@@ -243,7 +270,7 @@ def build_request(rng: random.Random, config: UDSFuzzConfig) -> UDSRequest:
     malformed = rng.random() < config.malformed_rate
 
     if malformed:
-        service_id = rng.choice(UDS_SERVICE_POOL + [rng.randrange(0x00, 0x100)])
+        service_id = rng.choice(UDS_SERVICE_POOL + (rng.randrange(0x00, 0x100),))
         payload = build_malformed_payload(rng, service_id)
         return UDSRequest(
             request_id=request_id,

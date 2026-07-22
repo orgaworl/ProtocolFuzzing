@@ -92,7 +92,18 @@ def passive_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict
             report(progress_callback, phase="passive", elapsed=time.monotonic() - start, total=config.passive_duration, ids=len(id_stats))
             continue
         record_message(id_stats, msg)
-        report(progress_callback, phase="passive", elapsed=time.monotonic() - start, total=config.passive_duration, ids=len(id_stats))
+        report(
+            progress_callback,
+            event="can_rx",
+            phase="passive",
+            elapsed=time.monotonic() - start,
+            total=config.passive_duration,
+            ids=len(id_stats),
+            rx_id=int(msg.arbitration_id),
+            rx_payload=bytes(msg.data).hex(),
+            rx_dlc=len(msg.data),
+            fd=getattr(msg, "is_fd", False),
+        )
 
 
 def active_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict[int, IdStats], progress_callback) -> list[dict[str, Any]]:
@@ -109,6 +120,7 @@ def active_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict[
             "response_payloads": "",
             "error": "",
         }
+        responses = []
         try:
             adapter.drain_pending()
             adapter.send_frame(probe)
@@ -121,7 +133,30 @@ def active_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict[
         except Exception as exc:
             row["error"] = str(exc)
         rows.append(row)
-        report(progress_callback, phase="active", elapsed=index, total=len(probes), ids=len(id_stats))
+        report(
+            progress_callback,
+            event="can_exchange",
+            protocol="scan",
+            phase="active",
+            probe_index=index,
+            total_probes=len(probes),
+            tx_id=probe.identifier,
+            tx_payload=probe.to_hex_payload(),
+            tx_dlc=probe.dlc,
+            tx_format=probe.frame_format.value,
+            tx_type=probe.frame_type.value,
+            fd=config.fd,
+            sent=row["error"] == "",
+            fault=bool(row["error"]),
+            state="response" if row["response_count"] else "send_error" if row["error"] else "no_response",
+            reason="send_error" if row["error"] else "response_received" if row["response_count"] else "no_response",
+            response_count=int(row["response_count"]),
+            response_ids=[int(msg.arbitration_id) for msg in responses],
+            response_payloads=[bytes(msg.data).hex() for msg in responses],
+            latency_ms=(time.monotonic() - sent_at) * 1000.0,
+            error=row["error"],
+            ids=len(id_stats),
+        )
         delay = config.inter_probe_delay_ms / 1000.0
         if delay > 0:
             time.sleep(delay)

@@ -110,6 +110,31 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[
                 targets_seen.add(f"0x{request.target_id:x}")
                 opcodes_seen.add(f"0x{request.opcode:02x}")
                 coverage.update(build_coverage_points(request, observation))
+                report_progress(
+                    progress_callback,
+                    event="can_exchange",
+                    protocol="private",
+                    case_id=case_id,
+                    total_cases=config.cases,
+                    tx_id=frame.identifier,
+                    tx_payload=frame.to_hex_payload(),
+                    tx_dlc=frame.dlc,
+                    tx_format=frame.frame_format.value,
+                    tx_type=frame.frame_type.value,
+                    fd=config.fd,
+                    sent=observation.sent,
+                    fault=observation.fault,
+                    state=observation.state,
+                    reason=observation.reason,
+                    response_count=observation.response_count,
+                    response_ids=observation.response_ids,
+                    response_payloads=observation.response_payloads,
+                    latency_ms=observation.latency_ms,
+                    error=observation.error,
+                    opcode=request.opcode,
+                    strategy=request.strategy,
+                    is_malformed=request.is_malformed,
+                )
 
                 writer.writerow(
                     {
@@ -343,4 +368,3 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-

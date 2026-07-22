@@ -53,6 +53,72 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.interval_ms, 250.0)
         self.assertEqual(args.format, "extended")
 
+    def test_payload_log_format_uses_fixed_eight_byte_width(self) -> None:
+        self.assertEqual(cli.format_hex_payload("02 3E 00"), "02 3E 00               ")
+        self.assertEqual(cli.format_hex_payload("00112233445566778899", fd=True), "00 11 22 33 44 55 66 77 ...")
+        self.assertEqual(cli.format_can_id(0x7DF), "0x000007DF")
+        self.assertEqual(cli.format_frame_block(0x7DF, 3, "02 3E 00"), "{ 0x000007DF [3] 02 3E 00                }")
+
+    def test_no_response_exchange_does_not_log_rx_none(self) -> None:
+        messages: list[str] = []
+        snapshot = {
+            "event": "can_exchange",
+            "protocol": "can",
+            "case_id": 0,
+            "total_cases": 1,
+            "tx_id": 0x7DF,
+            "tx_payload": "02 3E 00",
+            "tx_dlc": 3,
+            "tx_format": "standard",
+            "tx_type": "data",
+            "fd": False,
+            "sent": True,
+            "fault": False,
+            "state": "no_response",
+            "reason": "no_response",
+            "response_count": 0,
+            "response_ids": [],
+            "response_payloads": [],
+            "latency_ms": 50.0,
+            "error": "",
+        }
+        with patch.object(cli.console, "log", lambda message, *_args, **_kwargs: messages.append(str(message))):
+            cli.log_can_event(snapshot)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0], ">> [CAN 1/1] { 0x000007DF [3] 02 3E 00                } -> no_response")
+        self.assertNotIn("none", messages[0])
+        self.assertNotIn("ms", messages[0])
+
+    def test_main_keyboard_interrupt_prints_fuzz_summary(self) -> None:
+        messages: list[str] = []
+        cli.start_run_summary("fuzz", "can", "can_baseline", 10)
+        cli.record_run_event(
+            {
+                "event": "can_exchange",
+                "case_id": 2,
+                "tx_id": 0x7DF,
+                "tx_payload": "02 3E 00",
+                "sent": True,
+                "fault": False,
+                "state": "response",
+                "reason": "response_received",
+                "response_count": 1,
+                "error": "",
+            }
+        )
+        with (
+            patch.object(cli.console, "warning", lambda message, **_kwargs: messages.append(str(message))),
+            patch.object(cli.console, "info", lambda message, **_kwargs: messages.append(str(message))),
+            patch.object(cli.console, "log", lambda message, *_args, **_kwargs: messages.append(str(message))),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                cli.run_with_keyboard_interrupt_summary("fuzz", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+        self.assertEqual(raised.exception.code, 130)
+        self.assertIn("interrupted by Ctrl+C", messages)
+        self.assertIn("campaign=can_baseline", messages)
+        self.assertIn("status=interrupted", messages)
+        self.assertIn("cases=3/10 sent=1 faults=0 responses=1", messages)
+
     def test_udsfuzz_requires_interface_and_channel(self) -> None:
         parser = cli.make_parser("udsfuzz")
         cli.add_udsfuzz_arguments(parser)

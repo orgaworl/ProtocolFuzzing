@@ -58,6 +58,10 @@ KEEPALIVE_PRESETS: dict[str, dict[str, Any]] = {
         "check_message": False,
     },
 }
+
+ACTIVE_RUN_SUMMARY: dict[str, Any] = {}
+
+
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     def _get_help_string(self, action: argparse.Action) -> str:
         help_text = action.help or ""
@@ -194,7 +198,86 @@ def extract_keepalive_preset(argv: list[str]) -> str | None:
     return normalize_keepalive_preset(known.preset)
 
 
+def run_with_keyboard_interrupt_summary(command: str, action) -> None:
+    try:
+        action()
+    except KeyboardInterrupt as exc:
+        print_keyboard_interrupt_summary(command)
+        raise SystemExit(130) from exc
+
+
+def start_run_summary(command: str, protocol: str, campaign: str, requested_cases: int | None = None) -> None:
+    ACTIVE_RUN_SUMMARY.clear()
+    ACTIVE_RUN_SUMMARY.update(
+        {
+            "command": command,
+            "protocol": protocol,
+            "campaign": campaign,
+            "requested_cases": requested_cases,
+            "completed_cases": 0,
+            "sent": 0,
+            "faults": 0,
+            "responses": 0,
+            "last_tx_id": None,
+            "last_tx_payload": "",
+            "last_state": "",
+            "last_error": "",
+        }
+    )
+
+
+def record_run_event(snapshot: dict[str, Any]) -> None:
+    if not ACTIVE_RUN_SUMMARY or snapshot.get("event") != "can_exchange":
+        return
+    if "case_id" in snapshot:
+        completed = int(snapshot.get("case_id", -1)) + 1
+    elif "probe_index" in snapshot:
+        completed = int(snapshot.get("probe_index", 0))
+    else:
+        completed = int(ACTIVE_RUN_SUMMARY.get("completed_cases", 0)) + 1
+    ACTIVE_RUN_SUMMARY["completed_cases"] = max(int(ACTIVE_RUN_SUMMARY.get("completed_cases", 0)), completed)
+    ACTIVE_RUN_SUMMARY["sent"] = int(ACTIVE_RUN_SUMMARY.get("sent", 0)) + int(bool(snapshot.get("sent", False)))
+    ACTIVE_RUN_SUMMARY["faults"] = int(ACTIVE_RUN_SUMMARY.get("faults", 0)) + int(bool(snapshot.get("fault", False)))
+    ACTIVE_RUN_SUMMARY["responses"] = int(ACTIVE_RUN_SUMMARY.get("responses", 0)) + int(snapshot.get("response_count", 0) or 0)
+    ACTIVE_RUN_SUMMARY["last_tx_id"] = snapshot.get("tx_id")
+    ACTIVE_RUN_SUMMARY["last_tx_payload"] = snapshot.get("tx_payload", "")
+    ACTIVE_RUN_SUMMARY["last_state"] = format_tx_result(snapshot)
+    ACTIVE_RUN_SUMMARY["last_error"] = snapshot.get("error", "")
+
+
+def print_keyboard_interrupt_summary(command: str) -> None:
+    console.warning("interrupted by Ctrl+C")
+    summary = dict(ACTIVE_RUN_SUMMARY)
+    if not summary:
+        console.warning(f"command={command} status=interrupted before campaign statistics were available")
+        return
+    console.info(f"campaign={summary.get('campaign', '')}")
+    print_status_line(True)
+    requested = summary.get("requested_cases")
+    if requested is None:
+        console.info(
+            f"completed={summary.get('completed_cases', 0)} sent={summary.get('sent', 0)} "
+            f"faults={summary.get('faults', 0)} responses={summary.get('responses', 0)}"
+        )
+    else:
+        console.info(
+            f"cases={summary.get('completed_cases', 0)}/{requested} sent={summary.get('sent', 0)} "
+            f"faults={summary.get('faults', 0)} responses={summary.get('responses', 0)}"
+        )
+    if summary.get("last_tx_id") is not None:
+        console.info(
+            f"last_tx={format_frame_block(summary.get('last_tx_id'), payload_dlc(summary.get('last_tx_payload', '')), summary.get('last_tx_payload', ''))} "
+            f"state={summary.get('last_state', '')}"
+        )
+    if summary.get("last_error"):
+        console.warning(f"last_error={summary['last_error']}")
+
+
 def fuzz_main() -> None:
+    run_with_keyboard_interrupt_summary("fuzz", _fuzz_main)
+
+
+def _fuzz_main() -> None:
     parser = make_parser(description="run a CAN or CAN-based protocol fuzzing campaign on a real device")
     add_fuzz_arguments(parser)
     args = parse_fuzz_args_with_config(parser)
@@ -223,6 +306,10 @@ def list_main() -> None:
 
 
 def keepalive_main() -> None:
+    run_with_keyboard_interrupt_summary("keepalive", _keepalive_main)
+
+
+def _keepalive_main() -> None:
     parser = make_parser(description="send periodic keepalive frames on a real CAN device")
     add_keepalive_arguments(parser)
     args = parse_keepalive_args_with_config(parser)
@@ -230,6 +317,10 @@ def keepalive_main() -> None:
 
 
 def fdcheck_main() -> None:
+    run_with_keyboard_interrupt_summary("fdcheck", _fdcheck_main)
+
+
+def _fdcheck_main() -> None:
     parser = make_parser(description="test whether the CAN hardware and target device support CAN FD")
     add_fdcheck_arguments(parser)
     args = parse_args_with_config(parser, "fdcheck")
@@ -237,6 +328,10 @@ def fdcheck_main() -> None:
 
 
 def udsfuzz_main() -> None:
+    run_with_keyboard_interrupt_summary("udsfuzz", _udsfuzz_main)
+
+
+def _udsfuzz_main() -> None:
     parser = make_parser(description="run a UDS/ISO-TP fuzzing campaign on a real CAN device")
     add_udsfuzz_arguments(parser)
     args = parse_args_with_config(parser, "udsfuzz")
@@ -244,6 +339,10 @@ def udsfuzz_main() -> None:
 
 
 def obdfuzz_main() -> None:
+    run_with_keyboard_interrupt_summary("obdfuzz", _obdfuzz_main)
+
+
+def _obdfuzz_main() -> None:
     parser = make_parser(description="run an OBD-II fuzzing campaign on a real CAN device")
     add_obdfuzz_arguments(parser)
     args = parse_args_with_config(parser, "obdfuzz")
@@ -251,6 +350,10 @@ def obdfuzz_main() -> None:
 
 
 def privatefuzz_main() -> None:
+    run_with_keyboard_interrupt_summary("privatefuzz", _privatefuzz_main)
+
+
+def _privatefuzz_main() -> None:
     parser = make_parser(description="run a configurable private control protocol fuzzing campaign on CAN")
     add_privatefuzz_arguments(parser)
     args = parse_args_with_config(parser, "privatefuzz")
@@ -259,12 +362,20 @@ def privatefuzz_main() -> None:
 
 
 def scan_main() -> None:
+    run_with_keyboard_interrupt_summary("scan", _scan_main)
+
+
+def _scan_main() -> None:
     parser = make_parser(description="scan devices and message IDs on a real CAN bus")
     add_scan_arguments(parser)
     args = parse_args_with_config(parser, "scan")
     run_scan_from_args(args)
 
 def legacy_main() -> None:
+    run_with_keyboard_interrupt_summary("legacy", _legacy_main)
+
+
+def _legacy_main() -> None:
     parser = make_parser(description="CAN protocol fuzzing framework")
     subparsers = parser.add_subparsers(dest="command")
 
@@ -406,16 +517,14 @@ def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
+    start_run_summary("fuzz", "can", config.campaign, config.cases)
     console.info(
         f"opening interface={config.interface} channel={config.channel} "
         f"bitrate={config.bitrate} cases={config.cases}",
         flush=True,
     )
     try:
-        if args.no_progress:
-            result = run_fuzzing(config)
-        else:
-            result = run_fuzzing_with_tqdm(config)
+        result = run_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
         console.error(f"error: {exc}")
         raise SystemExit(2) from exc
@@ -425,30 +534,6 @@ def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
     console.debug(f"coverage_points={result.coverage_points} unique_reasons={result.unique_reasons}")
     console.info(f"csv={result.csv_path}")
     console.info(f"summary={result.summary_path}")
-
-
-def run_fuzzing_with_tqdm(config: FuzzConfig):
-    from tqdm import tqdm
-
-    with tqdm(total=config.cases, unit="case", dynamic_ncols=True) as progress:
-        last_completed = 0
-
-        def update_progress(snapshot: dict) -> None:
-            nonlocal last_completed
-            completed = int(snapshot["completed_cases"])
-            delta = completed - last_completed
-            if delta > 0:
-                progress.update(delta)
-                last_completed = completed
-            progress.set_postfix(
-                sent=snapshot["sent"],
-                faults=snapshot["faults"],
-                responses=snapshot["responses"],
-                coverage=snapshot["coverage_points"],
-                refresh=False,
-            )
-
-        return run_fuzzing(config, progress_callback=update_progress)
 
 
 def run_keepalive_from_args(args: argparse.Namespace) -> None:
@@ -504,10 +589,156 @@ def run_keepalive_from_args(args: argparse.Namespace) -> None:
 
 def log_keepalive_response(message: Any) -> None:
     payload = bytes(getattr(message, "data", b""))
-    console.info(
-        f"keepalive_response id=0x{int(getattr(message, 'arbitration_id', 0)):x} "
-        f"dlc={len(payload)} data={payload.hex()}"
+    console.log(
+        f"<< [KEEPALIVE] {format_frame_block(getattr(message, 'arbitration_id', None), len(payload), payload, fd=getattr(message, 'is_fd', False))}",
+        "rx",
     )
+
+
+def log_can_event(snapshot: dict[str, Any]) -> None:
+    event = snapshot.get("event")
+    if event == "can_exchange":
+        log_can_exchange(snapshot)
+    elif event == "can_rx":
+        log_can_rx(snapshot)
+
+
+def log_can_exchange(snapshot: dict[str, Any]) -> None:
+    record_run_event(snapshot)
+    protocol = str(snapshot.get("protocol", "can")).upper()
+    context = format_context(snapshot, protocol)
+    tags = format_frame_tags(snapshot)
+    tag_text = f" {' '.join(tags)}" if tags else ""
+    tx_block = format_frame_block(
+        snapshot.get("tx_id"),
+        snapshot.get("tx_dlc", 0),
+        snapshot.get("tx_payload", ""),
+        fd=bool(snapshot.get("fd", False)),
+        suffix=tag_text.strip(),
+    )
+    tx_line = (
+        f">> {context} {tx_block} "
+        f"-> {format_tx_result(snapshot)}"
+    )
+    error = str(snapshot.get("error", ""))
+    if error:
+        console.error(f"{tx_line} error={error}")
+    elif bool(snapshot.get("fault", False)):
+        console.warning(tx_line)
+    else:
+        console.log(tx_line, "tx")
+
+    response_count = int(snapshot.get("response_count", 0) or 0)
+    response_ids = list(snapshot.get("response_ids", []) or [])
+    response_payloads = list(snapshot.get("response_payloads", []) or [])
+    if response_count == 0:
+        return
+    for index in range(max(response_count, len(response_ids), len(response_payloads))):
+        rx_id = response_ids[index] if index < len(response_ids) else None
+        payload = response_payloads[index] if index < len(response_payloads) else ""
+        console.log(
+            f"<< {context} {index + 1}/{response_count} {format_frame_block(rx_id, payload_dlc(payload), payload, fd=bool(snapshot.get('fd', False)))}",
+            "rx",
+        )
+
+
+def log_can_rx(snapshot: dict[str, Any]) -> None:
+    context = format_context(snapshot, "SCAN")
+    fd_text = " fd" if bool(snapshot.get("fd", False)) else ""
+    console.log(
+        f"<< {context} {format_frame_block(snapshot.get('rx_id'), snapshot.get('rx_dlc', 0), snapshot.get('rx_payload', ''), fd=bool(snapshot.get('fd', False)), suffix=fd_text.strip())}",
+        "rx",
+    )
+
+
+def format_context(snapshot: dict[str, Any], protocol: str) -> str:
+    if "case_id" in snapshot:
+        current = int(snapshot.get("case_id", 0)) + 1
+        total = snapshot.get("total_cases")
+        value = f"{current}/{total}" if total is not None else str(current)
+        return f"[{protocol} {value}]"
+    if "probe_index" in snapshot:
+        current = int(snapshot.get("probe_index", 0))
+        total = snapshot.get("total_probes")
+        value = f"{current}/{total}" if total is not None else str(current)
+        return f"[{protocol} probe {value}]"
+    phase = snapshot.get("phase")
+    if phase:
+        return f"[{protocol} {phase}]"
+    return f"[{protocol}]"
+
+
+def format_frame_tags(snapshot: dict[str, Any]) -> list[str]:
+    tags: list[str] = []
+    if str(snapshot.get("tx_format", "standard")) != "standard":
+        tags.append(str(snapshot.get("tx_format")))
+    frame_type = str(snapshot.get("tx_type", "data"))
+    if frame_type != "data":
+        tags.append(frame_type)
+    if bool(snapshot.get("fd", False)):
+        tags.append("fd")
+    return tags
+
+
+def format_tx_result(snapshot: dict[str, Any]) -> str:
+    if not bool(snapshot.get("sent", False)):
+        return "send_failed"
+    reason = str(snapshot.get("reason", ""))
+    state = str(snapshot.get("state", ""))
+    if state == "response" and reason == "response_received":
+        return "response"
+    if state == "no_response" and reason == "no_response":
+        return "no_response"
+    if state == "send_error" and reason == "send_error":
+        return "send_error"
+    if reason and reason != state:
+        return f"{state}/{reason}" if state else reason
+    return state or reason or "sent"
+
+
+def format_can_id(value: Any) -> str:
+    if value is None or value == "":
+        return "0x--------"
+    try:
+        return f"0x{int(value) & 0xFFFFFFFF:08X}"
+    except (TypeError, ValueError):
+        return str(value).ljust(10)[:10]
+
+
+def format_frame_block(frame_id: Any, dlc: Any, payload: Any, fd: bool = False, suffix: str = "") -> str:
+    suffix_text = f" {suffix}" if suffix else ""
+    return f"{{ {format_can_id(frame_id)}{suffix_text} [{dlc}] {format_hex_payload(payload, fd=fd)} }}"
+
+
+def format_bool(value: Any) -> str:
+    return "yes" if bool(value) else "no"
+
+
+def format_hex_payload(value: Any, fd: bool = False) -> str:
+    bytes_text = split_hex_payload(value)
+    visible = bytes_text[:8]
+    payload = " ".join(visible).ljust(23)
+    if fd and len(bytes_text) > 8:
+        return f"{payload} ..."
+    return payload
+
+
+def split_hex_payload(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, bytes):
+        raw = value.hex()
+    else:
+        raw = str(value).replace(" ", "").replace(";", "")
+    if not raw:
+        return []
+    return [raw[index : index + 2].upper() for index in range(0, len(raw), 2)]
+
+
+def payload_dlc(value: Any) -> int:
+    if isinstance(value, bytes):
+        return len(value)
+    return len(split_hex_payload(value))
 
 
 def run_plot_from_args(args: argparse.Namespace) -> None:
@@ -630,16 +861,14 @@ def run_scan_from_args(args: argparse.Namespace) -> None:
         physical_start=args.physical_start,
         physical_end=args.physical_end,
     )
+    start_run_summary("scan", "scan", config.campaign, None)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
         f"passive={config.passive} active={config.active}",
         flush=True,
     )
     try:
-        if args.no_progress:
-            summary = run_scan(config)
-        else:
-            summary = run_scan_with_tqdm(config)
+        summary = run_scan(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
         console.error(f"error: {exc}")
         raise SystemExit(2) from exc
@@ -672,16 +901,14 @@ def run_fdcheck_from_args(args: argparse.Namespace) -> None:
         probe_timeout=args.probe_timeout,
         probe_delay_ms=args.probe_delay_ms,
     )
+    start_run_summary("fdcheck", "fdcheck", config.campaign, len(config.probe_lengths) * 4)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
         f"data_bitrate={config.data_bitrate} fd_clock={config.fd_clock} fd=True",
         flush=True,
     )
     try:
-        if args.no_progress:
-            result = run_fdcheck(config)
-        else:
-            result = run_fdcheck_with_tqdm(config)
+        result = run_fdcheck(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
         console.error(f"error: {exc}")
         raise SystemExit(2) from exc
@@ -719,15 +946,13 @@ def run_udsfuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
+    start_run_summary("udsfuzz", "uds", config.campaign, config.cases)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
         flush=True,
     )
     try:
-        if args.no_progress:
-            result = run_uds_fuzzing(config)
-        else:
-            result = run_uds_fuzzing_with_tqdm(config)
+        result = run_uds_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
         console.error(f"error: {exc}")
         raise SystemExit(2) from exc
@@ -760,15 +985,13 @@ def run_obdfuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
+    start_run_summary("obdfuzz", "obd", config.campaign, config.cases)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
         flush=True,
     )
     try:
-        if args.no_progress:
-            result = run_obd_fuzzing(config)
-        else:
-            result = run_obd_fuzzing_with_tqdm(config)
+        result = run_obd_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
         console.error(f"error: {exc}")
         raise SystemExit(2) from exc
@@ -779,30 +1002,6 @@ def run_obdfuzz_from_args(args: argparse.Namespace) -> None:
     console.debug(f"unique_modes={result.unique_modes} unique_pids={result.unique_pids}")
     console.info(f"csv={result.csv_path}")
     console.info(f"summary={result.summary_path}")
-
-
-def run_obd_fuzzing_with_tqdm(config: OBDFuzzConfig):
-    from tqdm import tqdm
-
-    with tqdm(total=config.cases, unit="case", desc="obdfuzz", dynamic_ncols=True) as progress:
-        last_completed = 0
-
-        def update_progress(snapshot: dict) -> None:
-            nonlocal last_completed
-            completed = int(snapshot["completed_cases"])
-            delta = completed - last_completed
-            if delta > 0:
-                progress.update(delta)
-                last_completed = completed
-            progress.set_postfix(
-                sent=snapshot["sent"],
-                responses=snapshot["responses"],
-                positive=snapshot["positive_responses"],
-                negative=snapshot["negative_responses"],
-                refresh=False,
-            )
-
-        return run_obd_fuzzing(config, progress_callback=update_progress)
 
 
 def run_privatefuzz_from_args(args: argparse.Namespace) -> None:
@@ -828,15 +1027,13 @@ def run_privatefuzz_from_args(args: argparse.Namespace) -> None:
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
     )
+    start_run_summary("privatefuzz", "private", config.campaign, config.cases)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} targets={len(config.target_ids)} opcodes={len(config.opcodes)}",
         flush=True,
     )
     try:
-        if args.no_progress:
-            result = run_private_fuzzing(config)
-        else:
-            result = run_private_fuzzing_with_tqdm(config)
+        result = run_private_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
         console.error(f"error: {exc}")
         raise SystemExit(2) from exc
@@ -848,110 +1045,6 @@ def run_privatefuzz_from_args(args: argparse.Namespace) -> None:
     console.info(f"summary={result.summary_path}")
 
 
-def run_private_fuzzing_with_tqdm(config: PrivateFuzzConfig):
-    from tqdm import tqdm
-
-    with tqdm(total=config.cases, unit="case", desc="privatefuzz", dynamic_ncols=True) as progress:
-        last_completed = 0
-
-        def update_progress(snapshot: dict) -> None:
-            nonlocal last_completed
-            completed = int(snapshot["completed_cases"])
-            delta = completed - last_completed
-            if delta > 0:
-                progress.update(delta)
-                last_completed = completed
-            progress.set_postfix(
-                sent=snapshot["sent"],
-                faults=snapshot["faults"],
-                responses=snapshot["responses"],
-                coverage=snapshot["coverage_points"],
-                refresh=False,
-            )
-
-        return run_private_fuzzing(config, progress_callback=update_progress)
-
-
-def run_uds_fuzzing_with_tqdm(config: UDSFuzzConfig):
-    from tqdm import tqdm
-
-    with tqdm(total=config.cases, unit="case", desc="udsfuzz", dynamic_ncols=True) as progress:
-        last_completed = 0
-
-        def update_progress(snapshot: dict) -> None:
-            nonlocal last_completed
-            completed = int(snapshot["completed_cases"])
-            delta = completed - last_completed
-            if delta > 0:
-                progress.update(delta)
-                last_completed = completed
-            progress.set_postfix(
-                sent=snapshot["sent"],
-                responses=snapshot["responses"],
-                positive=snapshot["positive_responses"],
-                negative=snapshot["negative_responses"],
-                refresh=False,
-            )
-
-        return run_uds_fuzzing(config, progress_callback=update_progress)
-
-
-def run_fdcheck_with_tqdm(config: FDCheckConfig):
-    from tqdm import tqdm
-
-    with tqdm(total=len(config.probe_lengths) * 4, unit="probe", desc="fdcheck", dynamic_ncols=True) as progress:
-        last_completed = 0
-
-        def update_progress(snapshot: dict) -> None:
-            nonlocal last_completed
-            completed = int(snapshot["completed"])
-            delta = completed - last_completed
-            if delta > 0:
-                progress.update(delta)
-                last_completed = completed
-            progress.set_postfix(target=snapshot.get("target_fd_supported", False), refresh=False)
-
-        return run_fdcheck(config, progress_callback=update_progress)
-
-
-def run_scan_with_tqdm(config: ScanConfig):
-    from tqdm import tqdm
-
-    passive_bar = None
-    active_bar = None
-    active_total = max(0, (config.physical_end - config.physical_start + 1) * 2 + 2) if config.active else 0
-    try:
-        if config.passive:
-            passive_bar = tqdm(total=config.passive_duration, unit="s", desc="passive", dynamic_ncols=True)
-        if config.active:
-            active_bar = tqdm(total=active_total, unit="probe", desc="active", dynamic_ncols=True)
-        passive_seen = 0.0
-        active_seen = 0
-
-        def update(snapshot: dict) -> None:
-            nonlocal passive_seen, active_seen
-            phase = snapshot.get("phase")
-            if phase == "passive" and passive_bar is not None:
-                elapsed = min(float(snapshot.get("elapsed", 0.0)), config.passive_duration)
-                delta = elapsed - passive_seen
-                if delta > 0:
-                    passive_bar.update(delta)
-                    passive_seen = elapsed
-                passive_bar.set_postfix(ids=snapshot.get("ids", 0), refresh=False)
-            elif phase == "active" and active_bar is not None:
-                elapsed = int(snapshot.get("elapsed", 0))
-                delta = elapsed - active_seen
-                if delta > 0:
-                    active_bar.update(delta)
-                    active_seen = elapsed
-                active_bar.set_postfix(ids=snapshot.get("ids", 0), refresh=False)
-
-        return run_scan(config, progress_callback=update)
-    finally:
-        if passive_bar is not None:
-            passive_bar.close()
-        if active_bar is not None:
-            active_bar.close()
 def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     required = parser.add_argument_group("required arguments")
     optional = parser.add_argument_group("optional arguments")
@@ -1004,7 +1097,7 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--extended", action="store_true", default=False, help="use extended CAN identifiers")
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
-    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
 
 
 def add_keepalive_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1067,7 +1160,7 @@ def add_fdcheck_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--output-dir", default="result", help="directory for CSV and JSON results")
     optional.add_argument("--probe-timeout", type=float, default=0.15, help="seconds to wait for responses after each FD probe")
     optional.add_argument("--probe-delay-ms", type=float, default=20.0, help="delay between FD probes")
-    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
 
 
 def add_udsfuzz_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1091,7 +1184,7 @@ def add_udsfuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--malformed-rate", type=float, default=0.15, help="probability of generating a malformed diagnostic request")
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
-    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
 
 
 def add_obdfuzz_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1115,7 +1208,7 @@ def add_obdfuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--malformed-rate", type=float, default=0.1, help="probability of generating a malformed OBD request")
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
-    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
 
 
 def add_privatefuzz_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1142,7 +1235,7 @@ def add_privatefuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
-    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
 
 
 def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1163,7 +1256,7 @@ def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--data-bitrate", type=parse_optional_int, default=None, help="CAN FD data bitrate")
     optional.add_argument("--passive-only", action="store_true", default=False, help="run passive listening only")
     optional.add_argument("--active-only", action="store_true", default=False, help="run active probing only")
-    optional.add_argument("--no-progress", action="store_true", default=False, help="disable tqdm progress output")
+    optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
 def parse_int(value: str) -> int:
     return int(value, 0)
 
@@ -1295,4 +1388,3 @@ def status_level(status: str) -> str:
     if lowered in {"interrupted", "not_run", "no_response"} or "warning" in lowered:
         return "warning"
     return "normal"
-

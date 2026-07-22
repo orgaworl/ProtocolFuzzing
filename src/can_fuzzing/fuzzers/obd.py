@@ -118,6 +118,34 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: Callable[[dict], N
                 if request.pid is not None:
                     pids_seen.add(f"0x{request.pid:02x}")
                 coverage.update(build_coverage_points(request, response_summary, observation))
+                report_progress(
+                    progress_callback,
+                    event="can_exchange",
+                    protocol="obd",
+                    case_id=case_id,
+                    total_cases=config.cases,
+                    tx_id=frame.identifier,
+                    tx_payload=frame.to_hex_payload(),
+                    tx_dlc=frame.dlc,
+                    tx_format=frame.frame_format.value,
+                    tx_type=frame.frame_type.value,
+                    fd=False,
+                    sent=observation.sent,
+                    fault=observation.fault,
+                    state=observation.state,
+                    reason=observation.reason,
+                    response_count=observation.response_count,
+                    response_ids=observation.response_ids,
+                    response_payloads=observation.response_payloads,
+                    latency_ms=observation.latency_ms,
+                    error=observation.error,
+                    request_mode=request.request_mode,
+                    obd_mode=request.obd_mode,
+                    mode_name=request.mode_name,
+                    pid=request.pid,
+                    application_payload=request.application_payload.hex(),
+                    response_kind=response_summary["kind"],
+                )
 
                 writer.writerow(
                     {
@@ -385,4 +413,3 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
