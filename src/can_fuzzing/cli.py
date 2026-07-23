@@ -80,7 +80,9 @@ def parse_args_with_config(parser: argparse.ArgumentParser, section: str, argv: 
     argv = list(sys.argv[1:] if argv is None else argv)
     config_path = extract_config_path(argv)
     if config_path is not None:
-        defaults = load_parser_defaults_from_config(parser, config_path, section)
+        raw_config = read_toml_config(config_path)
+        defaults = load_prefixed_keepalive_defaults(parser, raw_config) if section in FUZZING_SECTIONS else {}
+        defaults.update(load_parser_defaults_from_config(parser, config_path, section))
         parser.set_defaults(**defaults)
         relax_configured_required_args(parser, defaults)
     args = parser.parse_args(argv)
@@ -106,6 +108,7 @@ FUZZ_PROTOCOL_SECTION_MAP = {
     "obd": "obdfuzz",
     "private": "privatefuzz",
 }
+FUZZING_SECTIONS = {"fuzz", "udsfuzz", "obdfuzz", "privatefuzz"}
 
 
 def normalize_protocol(value: str | None) -> str | None:
@@ -148,6 +151,7 @@ def parse_fuzz_args_with_config(parser: argparse.ArgumentParser, argv: list[str]
 
     if config_path is not None:
         raw_config = read_toml_config(config_path)
+        defaults.update(load_prefixed_keepalive_defaults(parser, raw_config))
         defaults.update(load_parser_defaults_from_config(parser, config_path, "fuzz"))
         if protocol is None:
             protocol = normalize_protocol(defaults.get("protocol"))
@@ -196,6 +200,65 @@ def extract_keepalive_preset(argv: list[str]) -> str | None:
     pre_parser.add_argument("--preset")
     known, _ = pre_parser.parse_known_args(argv)
     return normalize_keepalive_preset(known.preset)
+
+
+def build_fuzz_keepalive_config(args: argparse.Namespace) -> KeepaliveConfig:
+    preset_name = normalize_keepalive_preset(getattr(args, "keepalive_preset", None)) or "tester-present"
+    preset = KEEPALIVE_PRESETS[preset_name]
+    frame_format = value_or_default(getattr(args, "keepalive_format", None), preset["format"])
+    return KeepaliveConfig(
+        enabled=bool(getattr(args, "keepalive", False)),
+        arbitration_id=value_or_default(getattr(args, "keepalive_id", None), preset["arbitration_id"]),
+        payload=parse_hex_bytes(value_or_default(getattr(args, "keepalive_payload", None), preset["payload"])),
+        interval_ms=value_or_default(getattr(args, "keepalive_interval_ms", None), 500.0),
+        extended=frame_format == "extended",
+        fd=value_or_default(getattr(args, "keepalive_fd", None), preset["fd"]),
+        listen=value_or_default(getattr(args, "keepalive_listen", None), preset["listen"]),
+        listen_timeout=value_or_default(getattr(args, "keepalive_listen_timeout", None), preset["listen_timeout"]),
+        check_message=value_or_default(getattr(args, "keepalive_check_message", None), preset["check_message"]),
+    )
+
+
+def value_or_default(value: Any, default: Any) -> Any:
+    return default if value is None else value
+
+
+def load_prefixed_keepalive_defaults(parser: argparse.ArgumentParser, raw_config: dict[str, Any]) -> dict[str, Any]:
+    section = raw_config.get("keepalive", {})
+    if not isinstance(section, dict):
+        return {}
+    parser_dests = {action.dest for action in parser._actions}
+    mapping = {
+        "enabled": "keepalive",
+        "keepalive": "keepalive",
+        "preset": "keepalive_preset",
+        "arbitration_id": "keepalive_id",
+        "id": "keepalive_id",
+        "payload": "keepalive_payload",
+        "interval_ms": "keepalive_interval_ms",
+        "format": "keepalive_format",
+        "fd": "keepalive_fd",
+        "listen": "keepalive_listen",
+        "listen_timeout": "keepalive_listen_timeout",
+        "check_message": "keepalive_check_message",
+    }
+    defaults: dict[str, Any] = {}
+    for key, dest in mapping.items():
+        if key in section and dest in parser_dests:
+            defaults[dest] = convert_keepalive_config_value(dest, section[key])
+    return defaults
+
+
+def convert_keepalive_config_value(dest: str, value: Any) -> Any:
+    if dest in {"keepalive", "keepalive_fd", "keepalive_listen", "keepalive_check_message"}:
+        return bool(value)
+    if dest == "keepalive_id":
+        return int(value, 0) if isinstance(value, str) else int(value)
+    if dest in {"keepalive_interval_ms", "keepalive_listen_timeout"}:
+        return float(value)
+    if value is None:
+        return None
+    return str(value)
 
 
 def run_with_keyboard_interrupt_summary(command: str, action) -> None:
@@ -516,6 +579,7 @@ def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
         include_error=args.include_error,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
+        keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("fuzz", "can", config.campaign, config.cases)
     console.info(
@@ -523,6 +587,7 @@ def run_can_fuzz_from_args(args: argparse.Namespace) -> None:
         f"bitrate={config.bitrate} cases={config.cases}",
         flush=True,
     )
+    log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
@@ -601,6 +666,8 @@ def log_can_event(snapshot: dict[str, Any]) -> None:
         log_can_exchange(snapshot)
     elif event == "can_rx":
         log_can_rx(snapshot)
+    elif event == "keepalive_summary":
+        log_keepalive_summary(snapshot)
 
 
 def log_can_exchange(snapshot: dict[str, Any]) -> None:
@@ -643,11 +710,35 @@ def log_can_exchange(snapshot: dict[str, Any]) -> None:
 
 
 def log_can_rx(snapshot: dict[str, Any]) -> None:
-    context = format_context(snapshot, "SCAN")
+    protocol = "KEEPALIVE" if snapshot.get("phase") == "keepalive" else "SCAN"
+    context = format_context(snapshot, protocol)
     fd_text = " fd" if bool(snapshot.get("fd", False)) else ""
     console.log(
         f"<< {context} {format_frame_block(snapshot.get('rx_id'), snapshot.get('rx_dlc', 0), snapshot.get('rx_payload', ''), fd=bool(snapshot.get('fd', False)), suffix=fd_text.strip())}",
         "rx",
+    )
+
+
+def log_keepalive_summary(snapshot: dict[str, Any]) -> None:
+    console.info(
+        f"keepalive_sent={snapshot.get('sent', 0)} keepalive_errors={snapshot.get('errors', 0)} "
+        f"keepalive_responses={snapshot.get('responses', 0)}"
+    )
+    if snapshot.get("csv_path"):
+        console.info(f"keepalive_csv={snapshot['csv_path']}")
+    if snapshot.get("last_error"):
+        console.warning(f"keepalive_last_error={snapshot['last_error']}")
+
+
+def log_shared_keepalive_config(config: KeepaliveConfig, csv_path: Path) -> None:
+    if not config.enabled:
+        console.debug("keepalive=disabled")
+        return
+    frame_format = "extended" if config.extended else "standard"
+    console.info(
+        f"keepalive=enabled shared_adapter=yes interval={config.interval_ms}ms listen={format_bool(config.listen)} "
+        f"frame={format_frame_block(config.arbitration_id, len(config.payload), config.payload, fd=config.fd, suffix=' '.join(item for item in [frame_format if frame_format != 'standard' else '', 'fd' if config.fd else ''] if item))} "
+        f"csv={csv_path}"
     )
 
 
@@ -945,12 +1036,14 @@ def run_udsfuzz_from_args(args: argparse.Namespace) -> None:
         malformed_rate=args.malformed_rate,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
+        keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("udsfuzz", "uds", config.campaign, config.cases)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
         flush=True,
     )
+    log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_uds_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
@@ -984,12 +1077,14 @@ def run_obdfuzz_from_args(args: argparse.Namespace) -> None:
         malformed_rate=args.malformed_rate,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
+        keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("obdfuzz", "obd", config.campaign, config.cases)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
         flush=True,
     )
+    log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_obd_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
@@ -1026,12 +1121,14 @@ def run_privatefuzz_from_args(args: argparse.Namespace) -> None:
         data_bitrate=args.data_bitrate,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
+        keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("privatefuzz", "private", config.campaign, config.cases)
     console.info(
         f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} targets={len(config.target_ids)} opcodes={len(config.opcodes)}",
         flush=True,
     )
+    log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_private_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
@@ -1098,6 +1195,7 @@ def add_fuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
     optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
+    add_fuzz_keepalive_arguments(optional)
 
 
 def add_keepalive_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1116,6 +1214,19 @@ def add_keepalive_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--listen", action=argparse.BooleanOptionalAction, default=True, help="listen for responses after each activation frame")
     optional.add_argument("--listen-timeout", type=float, default=0.05, help="seconds to wait for activation responses")
     optional.add_argument("--check-message", action=argparse.BooleanOptionalAction, default=True, help="validate CAN messages before sending")
+
+
+def add_fuzz_keepalive_arguments(optional: argparse._ArgumentGroup) -> None:
+    optional.add_argument("--keepalive", action=argparse.BooleanOptionalAction, default=False, help="send keepalive frames on the same CAN adapter during fuzzing")
+    optional.add_argument("--keepalive-preset", choices=sorted(KEEPALIVE_PRESETS), default="tester-present", help="keepalive activation frame preset")
+    optional.add_argument("--keepalive-id", type=parse_int, default=None, help="override keepalive arbitration ID")
+    optional.add_argument("--keepalive-payload", default=None, help="override keepalive hex payload")
+    optional.add_argument("--keepalive-interval-ms", type=float, default=None, help="delay between keepalive frames")
+    optional.add_argument("--keepalive-format", choices=["standard", "extended"], default=None, help="override keepalive frame format")
+    optional.add_argument("--keepalive-fd", action=argparse.BooleanOptionalAction, default=None, help="send keepalive frames as CAN FD")
+    optional.add_argument("--keepalive-listen", action=argparse.BooleanOptionalAction, default=None, help="listen for keepalive responses and save them to a separate CSV")
+    optional.add_argument("--keepalive-listen-timeout", type=float, default=None, help="seconds to wait for keepalive responses")
+    optional.add_argument("--keepalive-check-message", action=argparse.BooleanOptionalAction, default=None, help="validate keepalive CAN messages before sending")
 
 
 def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1185,6 +1296,7 @@ def add_udsfuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
     optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
+    add_fuzz_keepalive_arguments(optional)
 
 
 def add_obdfuzz_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1209,6 +1321,7 @@ def add_obdfuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
     optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
+    add_fuzz_keepalive_arguments(optional)
 
 
 def add_privatefuzz_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1236,6 +1349,7 @@ def add_privatefuzz_arguments(parser: argparse.ArgumentParser) -> None:
     optional.add_argument("--progress-interval", type=int, default=1, help="update progress after this many completed cases; 0 disables count-based updates")
     optional.add_argument("--progress-seconds", type=float, default=1.0, help="update progress after this many seconds; 0 disables time-based updates")
     optional.add_argument("--no-progress", action="store_true", default=False, help="compatibility option; output is line-based CAN logs")
+    add_fuzz_keepalive_arguments(optional)
 
 
 def add_scan_arguments(parser: argparse.ArgumentParser) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
+import contextlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -9,7 +10,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from can_fuzzing import cli
-from can_fuzzing.common.keepalive import KeepaliveConfig, KeepaliveWorker
+from can_fuzzing.common.keepalive import KeepaliveConfig, KeepaliveSession, KeepaliveWorker
 
 
 class DummyMessage:
@@ -17,6 +18,8 @@ class DummyMessage:
         self.arbitration_id = arbitration_id
         self.data = data
         self.is_rx = is_rx
+        self.is_fd = False
+        self.timestamp = 123.456
 
 
 class DummyAdapter:
@@ -26,6 +29,9 @@ class DummyAdapter:
 
     def drain_pending(self) -> None:
         return None
+
+    def io_lock(self):
+        return contextlib.nullcontext()
 
     def send_frame(self, frame, is_fd=None, check_message=None) -> None:
         self.sent_frames.append((frame, is_fd, check_message))
@@ -88,6 +94,20 @@ class KeepaliveTests(unittest.TestCase):
         self.assertEqual(stats.response_payloads, ("7f3e11",))
         self.assertEqual(adapter.sent_frames[0][1], False)
         self.assertEqual(adapter.sent_frames[0][2], True)
+
+    def test_keepalive_session_writes_response_csv(self) -> None:
+        events: list[dict] = []
+        adapter = DummyAdapter()
+        config = KeepaliveConfig(enabled=True, listen_timeout=0.001, interval_ms=1000.0)
+        with TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "keepalive.csv"
+            with KeepaliveSession(adapter, config, csv_path, events.append):
+                time.sleep(0.05)
+            content = csv_path.read_text(encoding="utf-8")
+        self.assertIn("timestamp,arbitration_id,dlc,payload_hex,fd", content)
+        self.assertIn("123.456000,0x123,3,7f3e11,0", content)
+        self.assertTrue(any(event.get("event") == "can_rx" for event in events))
+        self.assertTrue(any(event.get("event") == "keepalive_summary" for event in events))
 
 
 if __name__ == "__main__":

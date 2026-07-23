@@ -5,11 +5,12 @@ import json
 import random
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..adapters import CANHardwareAdapter
 from ..common.fuzzing_utils import report_progress, should_report_progress
+from ..common.keepalive import KeepaliveConfig, KeepaliveSession
 from ..common.protocol_dictionary import PRIVATE_OPCODES, PRIVATE_TARGET_IDS
 from ..models import CANFrame, FrameFormat, FrameType
 
@@ -36,6 +37,7 @@ class PrivateFuzzConfig:
     data_bitrate: int | None = None
     progress_interval: int = 100
     progress_seconds: float = 1.0
+    keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,12 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[
         receive_timeout=config.receive_timeout,
         fd=config.fd,
         data_bitrate=config.data_bitrate,
-    ) as adapter, csv_path.open("w", newline="", encoding="utf-8") as fh:
+    ) as adapter, KeepaliveSession(
+        adapter,
+        config.keepalive,
+        config.output_dir / f"{config.campaign}_keepalive.csv",
+        progress_callback,
+    ), csv_path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=result_fieldnames())
         writer.writeheader()
         fh.flush()

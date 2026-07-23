@@ -21,13 +21,53 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.interfaces, ",".join(cli.DEFAULT_DISCOVERY_INTERFACES))
         self.assertFalse(args.include_virtual)
 
-    def test_fuzz_parser_does_not_expose_keepalive_options(self) -> None:
+    def test_fuzz_parser_exposes_shared_keepalive_options(self) -> None:
         parser = cli.make_parser("fuzz")
         cli.add_fuzz_arguments(parser)
         dests = {action.dest for action in parser._actions}
-        self.assertNotIn("keepalive", dests)
-        self.assertNotIn("keepalive_id", dests)
-        self.assertNotIn("keepalive_payload", dests)
+        self.assertIn("keepalive", dests)
+        self.assertIn("keepalive_id", dests)
+        self.assertIn("keepalive_payload", dests)
+
+    def test_fuzz_keepalive_config_uses_preset_and_overrides(self) -> None:
+        args = Namespace(
+            keepalive=True,
+            keepalive_preset="ff-classic-response",
+            keepalive_id=None,
+            keepalive_payload="AA BB",
+            keepalive_interval_ms=250.0,
+            keepalive_format=None,
+            keepalive_fd=None,
+            keepalive_listen=None,
+            keepalive_listen_timeout=None,
+            keepalive_check_message=None,
+        )
+        config = cli.build_fuzz_keepalive_config(args)
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.arbitration_id, 0xFFFFFFFF)
+        self.assertEqual(config.payload, b"\xAA\xBB")
+        self.assertEqual(config.interval_ms, 250.0)
+        self.assertTrue(config.extended)
+        self.assertFalse(config.fd)
+        self.assertTrue(config.listen)
+        self.assertFalse(config.check_message)
+
+    def test_keepalive_section_maps_to_fuzz_keepalive_defaults(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                '[fuzz]\nkeepalive = true\n\n[keepalive]\npreset = "ff-classic-response"\ninterval_ms = 250.0\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            parser = cli.make_parser("fuzz")
+            cli.add_fuzz_arguments(parser)
+            args = cli.parse_fuzz_args_with_config(parser, ["-c", str(config_path)])
+        config = cli.build_fuzz_keepalive_config(args)
+        self.assertTrue(config.enabled)
+        self.assertEqual(args.keepalive_preset, "ff-classic-response")
+        self.assertEqual(config.arbitration_id, 0xFFFFFFFF)
+        self.assertEqual(config.interval_ms, 250.0)
 
     def test_keepalive_parser_allows_missing_interface_and_channel(self) -> None:
         parser = cli.make_parser("keepalive")

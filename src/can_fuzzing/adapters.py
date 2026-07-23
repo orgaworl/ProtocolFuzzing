@@ -115,78 +115,77 @@ class CANHardwareAdapter:
         except ImportError as exc:
             raise RuntimeError("python-can is required for real CAN device testing") from exc
 
-        self.drain_pending()
-        message = self._build_message(frame, is_fd=self.fd)
+        with self._io_lock:
+            self.drain_pending()
+            message = self._build_message(frame, is_fd=self.fd)
 
-        start = time.perf_counter()
-        try:
-            with self._io_lock:
+            start = time.perf_counter()
+            try:
                 quiet_call(self._bus.send, message)
-        except can.CanError as exc:
+            except can.CanError as exc:
+                latency = (time.perf_counter() - start) * 1000.0
+                return HardwareObservation(
+                    sent=False,
+                    fault=True,
+                    state="send_error",
+                    reason="send_error",
+                    response_count=0,
+                    response_ids=[],
+                    response_payloads=[],
+                    latency_ms=latency,
+                    error=str(exc),
+                )
+
+            responses = []
+            deadline = time.perf_counter() + self.receive_timeout
+            while True:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    break
+                try:
+                    response = quiet_call(self._bus.recv, timeout=remaining)
+                except can.CanError as exc:
+                    latency = (time.perf_counter() - start) * 1000.0
+                    return HardwareObservation(
+                        sent=True,
+                        fault=True,
+                        state="receive_error",
+                        reason="receive_error",
+                        response_count=len(responses),
+                        response_ids=[msg.arbitration_id for msg in responses],
+                        response_payloads=[bytes(msg.data).hex() for msg in responses],
+                        latency_ms=latency,
+                        error=str(exc),
+                    )
+                if response is None:
+                    break
+                if response.is_rx:
+                    responses.append(response)
+
             latency = (time.perf_counter() - start) * 1000.0
+            response_ids = [msg.arbitration_id for msg in responses]
+            response_payloads = [bytes(msg.data).hex() for msg in responses]
+            if responses:
+                return HardwareObservation(
+                    sent=True,
+                    fault=False,
+                    state="response",
+                    reason="response_received",
+                    response_count=len(responses),
+                    response_ids=response_ids,
+                    response_payloads=response_payloads,
+                    latency_ms=latency,
+                )
             return HardwareObservation(
-                sent=False,
-                fault=True,
-                state="send_error",
-                reason="send_error",
+                sent=True,
+                fault=False,
+                state="no_response",
+                reason="no_response",
                 response_count=0,
                 response_ids=[],
                 response_payloads=[],
                 latency_ms=latency,
-                error=str(exc),
             )
-
-        responses = []
-        deadline = time.perf_counter() + self.receive_timeout
-        while True:
-            remaining = deadline - time.perf_counter()
-            if remaining <= 0:
-                break
-            try:
-                with self._io_lock:
-                    response = quiet_call(self._bus.recv, timeout=remaining)
-            except can.CanError as exc:
-                latency = (time.perf_counter() - start) * 1000.0
-                return HardwareObservation(
-                    sent=True,
-                    fault=True,
-                    state="receive_error",
-                    reason="receive_error",
-                    response_count=len(responses),
-                    response_ids=[msg.arbitration_id for msg in responses],
-                    response_payloads=[bytes(msg.data).hex() for msg in responses],
-                    latency_ms=latency,
-                    error=str(exc),
-                )
-            if response is None:
-                break
-            if response.is_rx:
-                responses.append(response)
-
-        latency = (time.perf_counter() - start) * 1000.0
-        response_ids = [msg.arbitration_id for msg in responses]
-        response_payloads = [bytes(msg.data).hex() for msg in responses]
-        if responses:
-            return HardwareObservation(
-                sent=True,
-                fault=False,
-                state="response",
-                reason="response_received",
-                response_count=len(responses),
-                response_ids=response_ids,
-                response_payloads=response_payloads,
-                latency_ms=latency,
-            )
-        return HardwareObservation(
-            sent=True,
-            fault=False,
-            state="no_response",
-            reason="no_response",
-            response_count=0,
-            response_ids=[],
-            response_payloads=[],
-            latency_ms=latency,
-        )
 
     def send_frame(self, frame: CANFrame, is_fd: bool | None = None, check_message: bool | None = None) -> None:
         if self._bus is None:
@@ -204,6 +203,9 @@ class CANHardwareAdapter:
             raise RuntimeError("CAN bus is not open")
         with self._io_lock:
             return quiet_call(self._bus.recv, timeout=timeout)
+
+    def io_lock(self):
+        return self._io_lock
 
     def drain_pending(self) -> None:
         if self._bus is None:
@@ -294,8 +296,6 @@ def channel_status_hint(interface: str, channel: str) -> list[str]:
             return ["The PCAN channel is occupied by PCAN-View or another PCAN client."]
         return [f"The PCAN channel reported condition {condition}."]
     return ["For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel."]
-
-
 
 
 

@@ -4,6 +4,7 @@ output_dir = "result"
 
 [fuzz]
 protocol = "can"
+keepalive = false
 cases = 10000
 seed = 1337
 campaign = "can_baseline"
@@ -22,6 +23,7 @@ progress_seconds = 1.0
 no_progress = false
 
 [keepalive]
+# Shared by `uv run keepalive` and fuzzing entries when `keepalive = true` or `--keepalive` is set.
 preset = "tester-present"
 bitrate = 500000
 data_bitrate = 2000000

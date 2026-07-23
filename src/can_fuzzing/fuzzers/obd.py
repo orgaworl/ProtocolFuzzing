@@ -5,10 +5,11 @@ import json
 import random
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..adapters import CANHardwareAdapter
+from ..common.keepalive import KeepaliveConfig, KeepaliveSession
 from ..common.fuzzing_utils import (
     decode_isotp_payload,
     encode_isotp_single_frame,
@@ -39,6 +40,7 @@ class OBDFuzzConfig:
     malformed_rate: float = 0.1
     progress_interval: int = 100
     progress_seconds: float = 1.0
+    keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,12 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: Callable[[dict], N
         receive_timeout=config.receive_timeout,
         fd=False,
         data_bitrate=None,
-    ) as adapter, csv_path.open("w", newline="", encoding="utf-8") as fh:
+    ) as adapter, KeepaliveSession(
+        adapter,
+        config.keepalive,
+        config.output_dir / f"{config.campaign}_keepalive.csv",
+        progress_callback,
+    ), csv_path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=result_fieldnames())
         writer.writeheader()
         fh.flush()
