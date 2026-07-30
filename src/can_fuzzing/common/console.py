@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from typing import Any, TextIO
@@ -7,13 +8,40 @@ from typing import Any, TextIO
 
 RESET = "\033[0m"
 COLORS = {
-    "normal": "\033[37m",
-    "warning": "\033[33m",
-    "error": "\033[31m",
-    "debug": "\033[32m",
-    "tx": "\033[36m",
-    "rx": "\033[32m",
+    logging.DEBUG: "\033[32m",
+    logging.INFO: "\033[37m",
+    logging.WARNING: "\033[33m",
+    logging.ERROR: "\033[31m",
+    logging.CRITICAL: "\033[31m",
 }
+
+LOGGER_NAME = "can_fuzzing"
+_LOGGER = logging.getLogger(LOGGER_NAME)
+
+
+class ColorFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        message = super().format(record)
+        stream = getattr(record, "stream", sys.stdout)
+        if not color_enabled(stream):
+            return message
+        color = COLORS.get(record.levelno, COLORS[logging.INFO])
+        return f"{color}{message}{RESET}"
+
+
+class SplitStreamHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFormatter(ColorFormatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            stream = sys.stderr if record.levelno >= logging.ERROR else sys.stdout
+            record.stream = stream
+            stream.write(self.format(record) + "\n")
+            stream.flush()
+        except Exception:
+            self.handleError(record)
 
 
 def enable_windows_ansi() -> None:
@@ -40,15 +68,31 @@ def color_enabled(stream: TextIO) -> bool:
     return hasattr(stream, "isatty") and stream.isatty()
 
 
-def colorize(message: str, level: str, stream: TextIO) -> str:
-    if not color_enabled(stream):
-        return message
-    return f"{COLORS[level]}{message}{RESET}"
+def configure_logging(level: int = logging.DEBUG) -> logging.Logger:
+    enable_windows_ansi()
+    _LOGGER.handlers.clear()
+    _LOGGER.addHandler(SplitStreamHandler())
+    _LOGGER.setLevel(level)
+    _LOGGER.propagate = False
+    return _LOGGER
+
+
+def set_debug(enabled: bool) -> None:
+    _LOGGER.setLevel(logging.DEBUG if enabled else logging.INFO)
 
 
 def log(message: Any, level: str = "normal", stream: TextIO | None = None, **kwargs: Any) -> None:
-    target = stream or sys.stdout
-    print(colorize(str(message), level, target), file=target, **kwargs)
+    if stream is not None:
+        kwargs.pop("file", None)
+    kwargs.pop("flush", None)
+    if level == "debug":
+        _LOGGER.debug(str(message))
+    elif level in {"warning", "warn"}:
+        _LOGGER.warning(str(message))
+    elif level == "error":
+        _LOGGER.error(str(message))
+    else:
+        _LOGGER.info(str(message))
 
 
 def info(message: Any, **kwargs: Any) -> None:
@@ -60,11 +104,12 @@ def warning(message: Any, **kwargs: Any) -> None:
 
 
 def error(message: Any, **kwargs: Any) -> None:
-    log(message, "error", stream=sys.stderr, **kwargs)
+    log(message, "error", **kwargs)
 
 
 def debug(message: Any, **kwargs: Any) -> None:
     log(message, "debug", **kwargs)
 
 
-enable_windows_ansi()
+configure_logging()
+

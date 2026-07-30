@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from can_fuzzing import cli
+from can_fuzzing import cli_config
 from can_fuzzing.common.keepalive import KeepaliveConfig, KeepaliveSession, KeepaliveWorker
 
 
@@ -45,9 +45,7 @@ class DummyAdapter:
 
 class KeepaliveTests(unittest.TestCase):
     def test_keepalive_preset_from_cli(self) -> None:
-        parser = cli.make_parser("keepalive")
-        cli.add_keepalive_arguments(parser)
-        args = cli.parse_keepalive_args_with_config(parser, ["--preset", "ff-classic-response"])
+        args = cli_config.build_keepalive_args({"preset": "ff-classic-response"})
         self.assertEqual(args.arbitration_id, 0xFFFFFFFF)
         self.assertEqual(args.payload, "FF FF FF FF FF FF FF FF")
         self.assertEqual(args.format, "extended")
@@ -63,9 +61,7 @@ class KeepaliveTests(unittest.TestCase):
                 encoding="utf-8",
                 newline="\n",
             )
-            parser = cli.make_parser("keepalive")
-            cli.add_keepalive_arguments(parser)
-            args = cli.parse_keepalive_args_with_config(parser, ["-c", str(config_path)])
+            args = cli_config.build_keepalive_args({"config": str(config_path)})
         self.assertEqual(args.arbitration_id, 0xFFFFFFFF)
         self.assertEqual(args.format, "extended")
         self.assertTrue(args.fd)
@@ -112,3 +108,5 @@ class KeepaliveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

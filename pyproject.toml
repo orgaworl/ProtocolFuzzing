@@ -9,6 +9,7 @@ description = "CAN protocol fuzzing experiment framework"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "click>=8.1",
     "python-can>=4.4",
 ]
 
@@ -23,5 +24,4 @@ scan = "can_fuzzing.cli:scan_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
 

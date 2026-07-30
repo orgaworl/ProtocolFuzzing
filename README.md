@@ -56,6 +56,12 @@ Run an upper-layer UDS fuzzing campaign:
 uv run fuzz --protocol uds --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
 ```
 
+Run a DBC-based fuzzing campaign:
+
+```bash
+uv run fuzz --protocol DBC --dbc_file FILE_PATH --interface pcan --channel PCAN_USBBUS1 --bitrate 500000
+```
+
 Run an OBD-II fuzzing campaign:
 
 ```bash
@@ -91,7 +97,7 @@ The priority order is:
 2. config file values
 3. code defaults
 
-The configuration file can use top-level shared values and per-command sections. For fuzzing, put the protocol name in the `[fuzz]` section as `protocol = "can"`, `protocol = "uds"`, `protocol = "obd"`, or `protocol = "private"`.
+The configuration file can use top-level shared values and per-command sections. For fuzzing, put the protocol name in the `[fuzz]` section as `protocol = "can"`, `protocol = "dbc"`, `protocol = "uds"`, `protocol = "obd"`, or `protocol = "private"`. Use the `[dbcfuzz]` section for DBC-specific overrides.
 
 Command line options still override the config file, so you can keep the file as a base profile and adjust just one or two values per run.
 
@@ -122,9 +128,10 @@ uv run clean
 
 Important hardware options:
 
-- `--protocol`: choose `can`, `uds`, `obd`, or `private`.
+- `--protocol`: choose `can`, `dbc`, `uds`, `obd`, or `private`.
 - `--interface`: python-can backend, such as `socketcan`, `pcan`, `vector`, or `slcan`.
 - `--channel`: backend-specific channel name.
+- `--dbc_file`: DBC file path used when `--protocol dbc` is selected.
 - `--bitrate`: arbitration bitrate. Use `none` if the selected backend does not require it.
 - `--fd`: send CAN FD frames or open CAN FD mode when supported.
 - `--data-bitrate`: CAN FD data bitrate.
@@ -137,3 +144,14 @@ Important hardware options:
 - `--target-ids` and `--opcodes`: private protocol target IDs and opcodes.
 - `--passive-duration`: seconds to listen during scan before active probes.
 - `--active-timeout`: response collection window after each active scan probe.
+
+## DBC Support
+
+DBC fuzzing uses the local implementation under `src/can_fuzzing/fuzzers/dbc/` and is based on the DBC parsing and CAN packing ideas from the reference copy of openDBC in `reference/opendbc`. The reference project separates DBC data, CAN parsing and packing, vehicle logic, and safety logic. This repository uses only the DBC-oriented pieces as a reference and keeps the runtime path local to the fuzzing workflow.
+
+Reference files:
+
+- `reference/opendbc/README.md`
+- `reference/opendbc/opendbc/can/dbc.py`
+- `reference/opendbc/opendbc/can/parser.py`
+- `reference/opendbc/opendbc/can/packer.py`
