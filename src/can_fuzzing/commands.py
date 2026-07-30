@@ -341,6 +341,10 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
     print_status_value(str(summary["status"]))
     console.info(f"unique_ids={summary['unique_ids']} total_frames={summary['total_frames_observed']}")
     console.debug(f"active_probes={summary['active_probes']} active_responses={summary['active_responses']}")
+    if summary.get("background_traffic_detected"):
+        console.warning(
+            "background_traffic_detected=yes no probe-linked responses were found; scan results may come from unrelated bus activity"
+        )
     diagnostic_ids = ','.join(summary['suspected_diagnostic_response_ids']) or 'none'
     if diagnostic_ids == "none":
         console.warning(f"diagnostic_response_ids={diagnostic_ids}")

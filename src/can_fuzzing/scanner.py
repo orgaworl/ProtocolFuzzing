@@ -68,10 +68,11 @@ def run_scan(config: ScanConfig, progress_callback=None) -> dict[str, Any]:
     ) as adapter:
         try:
             adapter.drain_pending()
+            passive_signatures: set[tuple[int, str, int, bool]] = set()
             if config.passive:
-                passive_scan(adapter, config, id_stats, progress_callback)
+                passive_signatures = passive_scan(adapter, config, id_stats, progress_callback)
             if config.active:
-                active_rows = active_scan(adapter, config, id_stats, progress_callback)
+                active_rows = active_scan(adapter, config, id_stats, progress_callback, passive_signatures)
         except KeyboardInterrupt:
             interrupted = True
 
@@ -82,9 +83,15 @@ def run_scan(config: ScanConfig, progress_callback=None) -> dict[str, Any]:
     return summary
 
 
-def passive_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict[int, IdStats], progress_callback) -> None:
+def passive_scan(
+    adapter: CANHardwareAdapter,
+    config: ScanConfig,
+    id_stats: dict[int, IdStats],
+    progress_callback,
+) -> set[tuple[int, str, int, bool]]:
     start = time.monotonic()
     deadline = start + max(0.0, config.passive_duration)
+    observed_signatures: set[tuple[int, str, int, bool]] = set()
     while time.monotonic() < deadline:
         remaining = max(0.0, min(0.1, deadline - time.monotonic()))
         msg = adapter.receive_message(timeout=remaining)
@@ -92,6 +99,7 @@ def passive_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict
             report(progress_callback, phase="passive", elapsed=time.monotonic() - start, total=config.passive_duration, ids=len(id_stats))
             continue
         record_message(id_stats, msg)
+        observed_signatures.add(frame_signature(msg))
         report(
             progress_callback,
             event="can_rx",
@@ -104,9 +112,16 @@ def passive_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict
             rx_dlc=len(msg.data),
             fd=getattr(msg, "is_fd", False),
         )
+    return observed_signatures
 
 
-def active_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict[int, IdStats], progress_callback) -> list[dict[str, Any]]:
+def active_scan(
+    adapter: CANHardwareAdapter,
+    config: ScanConfig,
+    id_stats: dict[int, IdStats],
+    progress_callback,
+    passive_signatures: set[tuple[int, str, int, bool]],
+) -> list[dict[str, Any]]:
     probes = build_active_probes(config)
     rows: list[dict[str, Any]] = []
     for index, probe in enumerate(probes, start=1):
@@ -124,7 +139,7 @@ def active_scan(adapter: CANHardwareAdapter, config: ScanConfig, id_stats: dict[
         try:
             adapter.drain_pending()
             adapter.send_frame(probe)
-            responses = collect_responses(adapter, config.active_timeout)
+            responses = collect_responses(adapter, config.active_timeout, probe, passive_signatures)
             for msg in responses:
                 record_message(id_stats, msg)
             row["response_count"] = len(responses)
@@ -177,16 +192,48 @@ def build_active_probes(config: ScanConfig) -> list[CANFrame]:
     return probes
 
 
-def collect_responses(adapter: CANHardwareAdapter, timeout: float):
+def collect_responses(
+    adapter: CANHardwareAdapter,
+    timeout: float,
+    probe: CANFrame,
+    passive_signatures: set[tuple[int, str, int, bool]],
+):
     responses = []
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         msg = adapter.receive_message(timeout=max(0.0, deadline - time.monotonic()))
         if msg is None:
             break
-        if getattr(msg, "is_rx", True):
+        if getattr(msg, "is_rx", True) and is_probable_scan_response(probe, msg, passive_signatures):
             responses.append(msg)
     return responses
+
+
+def is_probable_scan_response(probe: CANFrame, msg, passive_signatures: set[tuple[int, str, int, bool]]) -> bool:
+    signature = frame_signature(msg)
+    if signature in passive_signatures:
+        return False
+    if int(getattr(msg, "arbitration_id", -1)) == int(probe.identifier):
+        return False
+    if bytes(getattr(msg, "data", b"")) == bytes(probe.data):
+        return False
+    expected_ids = expected_response_ids(int(probe.identifier))
+    if expected_ids is not None and int(getattr(msg, "arbitration_id", -1)) not in expected_ids:
+        return False
+    return True
+
+
+def expected_response_ids(request_id: int) -> set[int] | None:
+    if request_id == 0x7DF:
+        return set(range(0x7E8, 0x7F0))
+    if 0x7E0 <= request_id <= 0x7E7:
+        return {request_id + 8}
+    return None
+
+
+def frame_signature(msg) -> tuple[int, str, int, bool]:
+    payload = bytes(getattr(msg, "data", b""))
+    return (int(getattr(msg, "arbitration_id", -1)), payload.hex(), len(payload), bool(getattr(msg, "is_fd", False)))
 
 
 def record_message(id_stats: dict[int, IdStats], msg) -> None:
@@ -231,6 +278,7 @@ def build_summary(
     interrupted: bool,
 ) -> dict[str, Any]:
     response_ids = sorted({item.arbitration_id for item in id_stats.values() if 0x7E8 <= item.arbitration_id <= 0x7EF})
+    active_response_count = sum(int(row["response_count"]) for row in active_rows)
     return {
         "campaign": config.campaign,
         "status": "interrupted" if interrupted else "completed",
@@ -245,7 +293,8 @@ def build_summary(
         "unique_ids": len(id_stats),
         "total_frames_observed": sum(item.count for item in id_stats.values()),
         "active_probes": len(active_rows),
-        "active_responses": sum(int(row["response_count"]) for row in active_rows),
+        "active_responses": active_response_count,
+        "background_traffic_detected": bool(id_stats) and active_response_count == 0,
         "suspected_diagnostic_response_ids": [f"0x{value:x}" for value in response_ids],
         "observed_objects": [
             {
