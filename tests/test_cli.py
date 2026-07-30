@@ -151,10 +151,10 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 cli.fuzz_main()
         self.assertEqual(raised.exception.code, 130)
-        self.assertIn("interrupted by Ctrl+C", messages)
-        self.assertIn("campaign=can_baseline", messages)
-        self.assertIn("status=interrupted", messages)
-        self.assertIn("cases=3/10 sent=1 faults=0 responses=1", messages)
+        self.assertIn("interrupt { signal=Ctrl+C }", messages)
+        self.assertIn("campaign { name=can_baseline }", messages)
+        self.assertIn("status { value=interrupted }", messages)
+        self.assertIn("summary { cases=3/10 sent=1 faults=0 responses=1 }", messages)
 
     def test_click_fuzz_uses_cli_over_config_and_protocol_section(self) -> None:
         captured: list[SimpleNamespace] = []

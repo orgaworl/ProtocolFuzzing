@@ -31,6 +31,7 @@ from .log import (
     log_can_event,
     log_keepalive_response,
     log_shared_keepalive_config,
+    log_structured,
     start_run_summary,
     print_interface_table,
     print_scan_objects_table,
@@ -89,23 +90,18 @@ def run_can_fuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("fuzz", "can", config.campaign, config.cases)
-    console.info(
-        f"opening interface={config.interface} channel={config.channel} "
-        f"bitrate={config.bitrate} cases={config.cases}",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
-    console.info(f"campaign={result.campaign}")
+    log_structured("info", "campaign", {"name": result.campaign})
     print_status_line(result.interrupted)
-    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    console.debug(f"coverage_points={result.coverage_points} unique_reasons={result.unique_reasons}")
-    console.info(f"csv={result.csv_path}")
-    console.info(f"summary={result.summary_path}")
+    log_structured("info", "summary", {"cases": f"{result.completed_cases}/{result.cases}", "sent": result.sent, "faults": result.faults, "responses": result.responses})
+    log_structured("debug", "coverage", {"points": result.coverage_points, "reasons": result.unique_reasons})
+    log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
 
 def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
@@ -134,26 +130,18 @@ def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("fuzz", "dbc", config.campaign, config.cases)
-    console.info(
-        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} dbc_file={config.dbc_file}",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "dbc_file": config.dbc_file})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_dbc_fuzzing(config, progress_callback=log_can_event)
     except (CANConnectionError, ValueError) as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
-    console.info(f"campaign={result.campaign}")
+    log_structured("info", "campaign", {"name": result.campaign})
     print_status_line(result.interrupted)
-    console.info(
-        f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses} decoded_responses={result.decoded_responses}"
-    )
-    console.debug(
-        f"unique_messages={result.unique_messages} unique_signals={result.unique_signals} coverage_points={result.coverage_points}"
-    )
-    console.info(f"csv={result.csv_path}")
-    console.info(f"summary={result.summary_path}")
+    log_structured("info", "summary", {"cases": f"{result.completed_cases}/{result.cases}", "sent": result.sent, "faults": result.faults, "responses": result.responses, "decoded_responses": result.decoded_responses})
+    log_structured("debug", "coverage", {"messages": result.unique_messages, "signals": result.unique_signals, "points": result.coverage_points})
+    log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
 
 def run_keepalive_from_args(args: SimpleNamespace) -> None:
@@ -169,11 +157,7 @@ def run_keepalive_from_args(args: SimpleNamespace) -> None:
         listen_timeout=args.listen_timeout,
         check_message=args.check_message,
     )
-    console.info(
-        f"opening interface={interface} channel={channel} bitrate={args.bitrate} "
-        f"interval={config.interval_ms}ms id=0x{config.arbitration_id:x} preset={args.preset}",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": interface, "channel": channel, "bitrate": args.bitrate, "interval_ms": config.interval_ms, "id": f"0x{config.arbitration_id:x}", "preset": args.preset})
     try:
         with CANHardwareAdapter(
             interface=interface,
@@ -186,36 +170,35 @@ def run_keepalive_from_args(args: SimpleNamespace) -> None:
         ) as adapter:
             worker = KeepaliveWorker(adapter, config, response_callback=log_keepalive_response)
             worker.start()
-            console.info("keepalive running; press Ctrl+C to stop", flush=True)
+            log_structured("info", "keepalive", {"status": "running", "action": "press_ctrl_c_to_stop"})
             try:
                 while worker.is_alive():
                     time.sleep(1.0)
             except KeyboardInterrupt:
-                console.warning("keepalive interrupted by Ctrl+C; saving current results")
+                log_structured("warning", "interrupt", {"signal": "Ctrl+C", "task": "keepalive", "action": "saving_results"})
             stats = worker.stop()
     except CANConnectionError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
     else:
-        console.info(f"keepalive_sent={stats.sent} keepalive_errors={stats.errors}")
-        console.info(f"keepalive_responses={stats.responses}")
+        log_structured("info", "keepalive_summary", {"sent": stats.sent, "errors": stats.errors, "responses": stats.responses})
         if stats.response_ids:
-            console.info("keepalive_response_ids=" + ",".join(f"0x{value:x}" for value in stats.response_ids))
+            log_structured("info", "keepalive_response_ids", {"values": ",".join(f"0x{value:x}" for value in stats.response_ids)})
         if stats.response_payloads:
-            console.info("keepalive_response_payloads=" + ",".join(stats.response_payloads))
+            log_structured("info", "keepalive_response_payloads", {"values": ",".join(stats.response_payloads)})
         if stats.errors:
-            console.warning(f"keepalive_last_error={stats.last_error}")
+            log_structured("warning", "keepalive_last_error", {"message": stats.last_error})
 
 def run_plot_from_args(args: SimpleNamespace) -> None:
     outputs = plot_results(Path(args.input), Path(args.output_dir))
     for output in outputs:
-        console.info(f"wrote={output}")
+        log_structured("info", "wrote", {"path": output})
 
 
 def run_clean_from_args(args: SimpleNamespace) -> None:
     clean_directory(Path(args.result_dir))
     clean_directory(Path(args.plot_dir))
-    console.info(f"cleaned={args.result_dir},{args.plot_dir}")
+    log_structured("info", "cleaned", {"result_dir": args.result_dir, "plot_dir": args.plot_dir})
 
 
 def run_list_from_args(args: SimpleNamespace) -> None:
@@ -227,7 +210,7 @@ def run_list_from_args(args: SimpleNamespace) -> None:
             verbose=args.verbose,
         )
     except RuntimeError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
     if args.json:
         print(json.dumps(configs, indent=2, default=str))
@@ -241,10 +224,7 @@ def resolve_interface_and_channel(args: SimpleNamespace, section: str) -> tuple[
     if interface and channel:
         return str(interface), str(channel)
 
-    console.warning(
-        f"{section}: interface and channel were not fully provided; running interface discovery",
-        flush=True,
-    )
+    log_structured("warning", section, {"interface": "missing", "channel": "missing", "action": "running_interface_discovery"})
     interfaces = parse_interface_names(args.interfaces) if getattr(args, "interfaces", None) else None
     if interface and interfaces is None:
         interfaces = [str(interface)]
@@ -255,7 +235,7 @@ def resolve_interface_and_channel(args: SimpleNamespace, section: str) -> tuple[
             verbose=getattr(args, "verbose", False),
         )
     except RuntimeError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
 
     if getattr(args, "json", False):
@@ -267,29 +247,19 @@ def resolve_interface_and_channel(args: SimpleNamespace, section: str) -> tuple[
         raise SystemExit(2)
     if len(configs) == 1:
         selected = configs[0]
-        console.warning(
-            f"auto-selected interface={selected.get('interface', '')} channel={selected.get('channel', '')}",
-            flush=True,
-        )
+        log_structured("warning", "auto_selected", {"interface": selected.get('interface', ''), "channel": selected.get('channel', '')})
         return str(selected.get("interface", "")), str(selected.get("channel", ""))
 
     selected = prompt_interface_selection(configs)
-    console.warning(
-        f"selected interface={selected.get('interface', '')} channel={selected.get('channel', '')}",
-        flush=True,
-    )
+    log_structured("warning", "selected", {"interface": selected.get('interface', ''), "channel": selected.get('channel', '')})
     return str(selected.get("interface", "")), str(selected.get("channel", ""))
 
 
 def prompt_interface_selection(configs: list[dict[str, Any]]) -> dict[str, Any]:
     while True:
-        console.info("select a CAN interface by index:", flush=True)
+        log_structured("info", "select_interface", {"action": "choose_by_index", "options": len(configs)})
         for index, config in enumerate(configs, start=1):
-            console.info(
-                f"  [{index}] {config.get('interface', '')} {config.get('channel', '')} "
-                f"{config.get('device_name') or config.get('device') or ''}",
-                flush=True,
-            )
+            log_structured("info", f"option[{index}]", {"interface": config.get('interface', ''), "channel": config.get('channel', ''), "device": config.get('device_name') or config.get('device') or ''})
         try:
             choice = input(f"select CAN interface [1-{len(configs)}]: ").strip()
         except EOFError:
@@ -299,11 +269,11 @@ def prompt_interface_selection(configs: list[dict[str, Any]]) -> dict[str, Any]:
         try:
             index = int(choice)
         except ValueError:
-            console.warning("please enter a numeric selection", flush=True)
+            log_structured("warning", "selection", {"value": choice, "reason": "numeric_index_required"})
             continue
         if 1 <= index <= len(configs):
             return configs[index - 1]
-        console.warning(f"selection must be between 1 and {len(configs)}", flush=True)
+        log_structured("warning", "selection", {"value": choice, "range": f"1-{len(configs)}"})
 
 
 def run_scan_from_args(args: SimpleNamespace) -> None:
@@ -327,31 +297,24 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
         physical_end=args.physical_end,
     )
     start_run_summary("scan", "scan", config.campaign, None)
-    console.info(
-        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
-        f"passive={config.passive} active={config.active}",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "passive": config.passive, "active": config.active})
     try:
         summary = run_scan(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
-    console.info(f"campaign={summary['campaign']}")
+    log_structured("info", "campaign", {"name": summary['campaign']})
     print_status_value(str(summary["status"]))
-    console.info(f"unique_ids={summary['unique_ids']} total_frames={summary['total_frames_observed']}")
-    console.debug(f"active_probes={summary['active_probes']} active_responses={summary['active_responses']}")
+    log_structured("info", "scan", {"unique_ids": summary['unique_ids'], "total_frames": summary['total_frames_observed']})
+    log_structured("debug", "active", {"probes": summary['active_probes'], "responses": summary['active_responses']})
     if summary.get("background_traffic_detected"):
-        console.warning(
-            "background_traffic_detected=yes no probe-linked responses were found; scan results may come from unrelated bus activity"
-        )
+        log_structured("warning", "background_traffic_detected", {"value": True, "reason": "no_probe_linked_responses"})
     diagnostic_ids = ','.join(summary['suspected_diagnostic_response_ids']) or 'none'
     if diagnostic_ids == "none":
-        console.warning(f"diagnostic_response_ids={diagnostic_ids}")
+        log_structured("warning", "diagnostic_response_ids", {"value": diagnostic_ids})
     else:
-        console.debug(f"diagnostic_response_ids={diagnostic_ids}")
-    console.info(f"ids_csv={summary['ids_csv_path']}")
-    console.info(f"active_csv={summary['active_csv_path']}")
+        log_structured("debug", "diagnostic_response_ids", {"value": diagnostic_ids})
+    log_structured("info", "files", {"ids_csv": summary['ids_csv_path'], "active_csv": summary['active_csv_path']})
     print_scan_objects_table(summary.get("observed_objects", []))
 
 
@@ -371,28 +334,23 @@ def run_fdcheck_from_args(args: SimpleNamespace) -> None:
         probe_delay_ms=args.probe_delay_ms,
     )
     start_run_summary("fdcheck", "fdcheck", config.campaign, len(config.probe_lengths) * 4)
-    console.info(
-        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} "
-        f"data_bitrate={config.data_bitrate} fd_clock={config.fd_clock} fd=True",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "data_bitrate": config.data_bitrate, "fd_clock": config.fd_clock, "fd": True})
     try:
         result = run_fdcheck(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
-    console.info(f"campaign={result.campaign}")
+    log_structured("info", "campaign", {"name": result.campaign})
     print_status_line(result.interrupted)
-    console.log(f"hardware_fd_supported={format_bool(result.hardware_fd_supported)}", "debug" if result.hardware_fd_supported else "warning")
-    console.log(f"hardware_fd_opened={format_bool(result.hardware_fd_opened)}", "debug" if result.hardware_fd_opened else "warning")
-    console.log(f"hardware_fd_status={result.hardware_fd_status}", status_level(result.hardware_fd_status))
+    log_structured("debug" if result.hardware_fd_supported else "warning", "hardware_fd_supported", {"value": format_bool(result.hardware_fd_supported)})
+    log_structured("debug" if result.hardware_fd_opened else "warning", "hardware_fd_opened", {"value": format_bool(result.hardware_fd_opened)})
+    log_structured(status_level(result.hardware_fd_status), "hardware_fd_status", {"value": result.hardware_fd_status})
     if result.hardware_error:
-        console.error(f"hardware_error={result.hardware_error}")
-    console.log(f"target_fd_supported={format_bool(result.target_fd_supported)}", "debug" if result.target_fd_supported else "warning")
-    console.log(f"target_fd_status={result.target_fd_status}", status_level(result.target_fd_status))
-    console.info(f"probe_count={result.probe_count} response_count={result.response_count}")
-    console.info(f"csv={result.csv_path}")
-    console.info(f"summary={result.summary_path}")
+        log_structured("error", "hardware_error", {"message": result.hardware_error})
+    log_structured("debug" if result.target_fd_supported else "warning", "target_fd_supported", {"value": format_bool(result.target_fd_supported)})
+    log_structured(status_level(result.target_fd_status), "target_fd_status", {"value": result.target_fd_status})
+    log_structured("info", "result", {"probe_count": result.probe_count, "response_count": result.response_count})
+    log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
 
 def run_udsfuzz_from_args(args: SimpleNamespace) -> None:
@@ -417,23 +375,19 @@ def run_udsfuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("udsfuzz", "uds", config.campaign, config.cases)
-    console.info(
-        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "request_mode": config.request_mode})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_uds_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
-    console.info(f"campaign={result.campaign}")
+    log_structured("info", "campaign", {"name": result.campaign})
     print_status_line(result.interrupted)
-    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    console.debug(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses} multi_frame_responses={result.multi_frame_responses}")
-    console.debug(f"unique_services={result.unique_services} unique_nrcs={result.unique_nrcs}")
-    console.info(f"csv={result.csv_path}")
-    console.info(f"summary={result.summary_path}")
+    log_structured("info", "summary", {"cases": f"{result.completed_cases}/{result.cases}", "sent": result.sent, "faults": result.faults, "responses": result.responses})
+    log_structured("debug", "responses", {"positive": result.positive_responses, "negative": result.negative_responses, "multi_frame": result.multi_frame_responses})
+    log_structured("debug", "coverage", {"services": result.unique_services, "nrcs": result.unique_nrcs})
+    log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
 
 def run_obdfuzz_from_args(args: SimpleNamespace) -> None:
@@ -458,23 +412,19 @@ def run_obdfuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("obdfuzz", "obd", config.campaign, config.cases)
-    console.info(
-        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} request_mode={config.request_mode}",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "request_mode": config.request_mode})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_obd_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
-    console.info(f"campaign={result.campaign}")
+    log_structured("info", "campaign", {"name": result.campaign})
     print_status_line(result.interrupted)
-    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    console.debug(f"positive_responses={result.positive_responses} negative_responses={result.negative_responses}")
-    console.debug(f"unique_modes={result.unique_modes} unique_pids={result.unique_pids}")
-    console.info(f"csv={result.csv_path}")
-    console.info(f"summary={result.summary_path}")
+    log_structured("info", "summary", {"cases": f"{result.completed_cases}/{result.cases}", "sent": result.sent, "faults": result.faults, "responses": result.responses})
+    log_structured("debug", "responses", {"positive": result.positive_responses, "negative": result.negative_responses})
+    log_structured("debug", "coverage", {"modes": result.unique_modes, "pids": result.unique_pids})
+    log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
 
 def run_privatefuzz_from_args(args: SimpleNamespace) -> None:
@@ -502,22 +452,18 @@ def run_privatefuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("privatefuzz", "private", config.campaign, config.cases)
-    console.info(
-        f"opening interface={config.interface} channel={config.channel} bitrate={config.bitrate} cases={config.cases} targets={len(config.target_ids)} opcodes={len(config.opcodes)}",
-        flush=True,
-    )
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "targets": len(config.target_ids), "opcodes": len(config.opcodes)})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_private_fuzzing(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
-        console.error(f"error: {exc}")
+        log_structured("error", "error", {"message": exc})
         raise SystemExit(2) from exc
-    console.info(f"campaign={result.campaign}")
+    log_structured("info", "campaign", {"name": result.campaign})
     print_status_line(result.interrupted)
-    console.info(f"cases={result.completed_cases}/{result.cases} sent={result.sent} faults={result.faults} responses={result.responses}")
-    console.debug(f"unique_targets={result.unique_targets} unique_opcodes={result.unique_opcodes} coverage_points={result.coverage_points}")
-    console.info(f"csv={result.csv_path}")
-    console.info(f"summary={result.summary_path}")
+    log_structured("info", "summary", {"cases": f"{result.completed_cases}/{result.cases}", "sent": result.sent, "faults": result.faults, "responses": result.responses})
+    log_structured("debug", "coverage", {"targets": result.unique_targets, "opcodes": result.unique_opcodes, "points": result.coverage_points})
+    log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
 def clean_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)

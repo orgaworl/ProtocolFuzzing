@@ -9,6 +9,18 @@ from .common.keepalive import KeepaliveConfig
 
 ACTIVE_RUN_SUMMARY: dict[str, Any] = {}
 
+
+def log_structured(level: str, title: str, values: dict[str, Any]) -> None:
+    message = f"{title} {format_structured_block(values)}"
+    if level == "error":
+        console.error(message)
+    elif level == "warning":
+        console.warning(message)
+    elif level == "debug":
+        console.debug(message)
+    else:
+        console.info(message)
+
 def start_run_summary(command: str, protocol: str, campaign: str, requested_cases: int | None = None) -> None:
     ACTIVE_RUN_SUMMARY.clear()
     ACTIVE_RUN_SUMMARY.update(
@@ -49,31 +61,47 @@ def record_run_event(snapshot: dict[str, Any]) -> None:
 
 
 def print_keyboard_interrupt_summary(command: str) -> None:
-    console.warning("interrupted by Ctrl+C")
+    log_structured("warning", "interrupt", {"signal": "Ctrl+C"})
     summary = dict(ACTIVE_RUN_SUMMARY)
     if not summary:
-        console.warning(f"command={command} status=interrupted before campaign statistics were available")
+        log_structured("warning", "interrupt", {"command": command, "status": "interrupted", "reason": "before_campaign_statistics"})
         return
-    console.info(f"campaign={summary.get('campaign', '')}")
+    log_structured("info", "campaign", {"name": summary.get('campaign', '')})
     print_status_line(True)
     requested = summary.get("requested_cases")
     if requested is None:
-        console.info(
-            f"completed={summary.get('completed_cases', 0)} sent={summary.get('sent', 0)} "
-            f"faults={summary.get('faults', 0)} responses={summary.get('responses', 0)}"
+        log_structured(
+            "info",
+            "summary",
+            {
+                "completed": summary.get('completed_cases', 0),
+                "sent": summary.get('sent', 0),
+                "faults": summary.get('faults', 0),
+                "responses": summary.get('responses', 0),
+            },
         )
     else:
-        console.info(
-            f"cases={summary.get('completed_cases', 0)}/{requested} sent={summary.get('sent', 0)} "
-            f"faults={summary.get('faults', 0)} responses={summary.get('responses', 0)}"
+        log_structured(
+            "info",
+            "summary",
+            {
+                "cases": f"{summary.get('completed_cases', 0)}/{requested}",
+                "sent": summary.get('sent', 0),
+                "faults": summary.get('faults', 0),
+                "responses": summary.get('responses', 0),
+            },
         )
     if summary.get("last_tx_id") is not None:
-        console.info(
-            f"last_tx={format_frame_block(summary.get('last_tx_id'), payload_dlc(summary.get('last_tx_payload', '')), summary.get('last_tx_payload', ''))} "
-            f"state={summary.get('last_state', '')}"
+        log_structured(
+            "info",
+            "last_tx",
+            {
+                "frame": format_frame_block(summary.get('last_tx_id'), payload_dlc(summary.get('last_tx_payload', '')), summary.get('last_tx_payload', '')),
+                "state": summary.get('last_state', ''),
+            },
         )
     if summary.get("last_error"):
-        console.warning(f"last_error={summary['last_error']}")
+        log_structured("warning", "last_error", {"message": summary['last_error']})
 
 def log_keepalive_response(message: Any) -> None:
     payload = bytes(getattr(message, "data", b""))
@@ -211,25 +239,43 @@ def log_can_rx(snapshot: dict[str, Any]) -> None:
 
 
 def log_keepalive_summary(snapshot: dict[str, Any]) -> None:
-    console.info(
-        f"keepalive_sent={snapshot.get('sent', 0)} keepalive_errors={snapshot.get('errors', 0)} "
-        f"keepalive_responses={snapshot.get('responses', 0)}"
+    log_structured(
+        "info",
+        "keepalive_summary",
+        {
+            "sent": snapshot.get('sent', 0),
+            "errors": snapshot.get('errors', 0),
+            "responses": snapshot.get('responses', 0),
+        },
     )
     if snapshot.get("csv_path"):
-        console.info(f"keepalive_csv={snapshot['csv_path']}")
+        log_structured("info", "keepalive_csv", {"path": snapshot['csv_path']})
     if snapshot.get("last_error"):
-        console.warning(f"keepalive_last_error={snapshot['last_error']}")
+        log_structured("warning", "keepalive_last_error", {"message": snapshot['last_error']})
 
 
 def log_shared_keepalive_config(config: KeepaliveConfig, csv_path: Path) -> None:
     if not config.enabled:
-        console.debug("keepalive=disabled")
+        log_structured("debug", "keepalive", {"enabled": False})
         return
     frame_format = "extended" if config.extended else "standard"
-    console.info(
-        f"keepalive=enabled shared_adapter=yes interval={config.interval_ms}ms listen={format_bool(config.listen)} "
-        f"frame={format_frame_block(config.arbitration_id, len(config.payload), config.payload, fd=config.fd, suffix=' '.join(item for item in [frame_format if frame_format != 'standard' else '', 'fd' if config.fd else ''] if item))} "
-        f"csv={csv_path}"
+    log_structured(
+        "info",
+        "keepalive",
+        {
+            "enabled": True,
+            "shared_adapter": True,
+            "interval_ms": config.interval_ms,
+            "listen": config.listen,
+            "frame": format_frame_block(
+                config.arbitration_id,
+                len(config.payload),
+                config.payload,
+                fd=config.fd,
+                suffix=' '.join(item for item in [frame_format if frame_format != 'standard' else '', 'fd' if config.fd else ''] if item),
+            ),
+            "csv": csv_path,
+        },
     )
 
 
@@ -344,7 +390,7 @@ def payload_dlc(value: Any) -> int:
 
 def print_interface_table(configs: list[dict[str, Any]]) -> None:
     if not configs:
-        console.warning("No CAN interfaces detected.")
+        log_structured("warning", "discovery", {"interfaces": 0, "result": "none"})
         return
     rows = [format_interface_row(config) for config in configs]
     headers = ["interface", "channel", "device", "fd", "condition"]
@@ -360,7 +406,7 @@ def print_interface_table(configs: list[dict[str, Any]]) -> None:
 
 def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
     if not objects:
-        console.warning("No CAN communication objects detected.")
+        log_structured("warning", "scan_objects", {"count": 0, "result": "none"})
         return
 
     headers = ["id", "count", "first_seen", "last_seen", "dlcs", "samples"]
@@ -379,7 +425,7 @@ def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
     for row in rows:
         for index, value in enumerate(row):
             widths[index] = max(widths[index], len(value))
-    console.debug("scan objects:")
+    log_structured("debug", "scan_objects", {"count": len(objects)})
     console.debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
     console.debug("  ".join("-" * width for width in widths))
     for row in rows:
@@ -425,7 +471,17 @@ def print_status_line(interrupted: bool) -> None:
 
 
 def print_status_value(status: str) -> None:
-    console.log(f"status={status}", status_level(status))
+    log_structured(status_level(status), "status", {"value": status})
+
+
+def format_structured_block(values: dict[str, Any], max_items: int = 8) -> str:
+    if not values:
+        return "{}"
+    items = list(values.items())
+    parts = [f"{key}={format_scalar(value)}" for key, value in items[:max_items]]
+    if len(items) > max_items:
+        parts.append("...")
+    return "{ " + " ".join(parts) + " }"
 
 
 def status_level(status: str) -> str:
