@@ -11,7 +11,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from can_fuzzing import cli, cli_config, commands, log
+from can_fuzzing import cli
+from can_fuzzing import config as cli_config, commands, log
 
 
 class CliTests(unittest.TestCase):
@@ -30,6 +31,40 @@ class CliTests(unittest.TestCase):
         self.assertIn("keepalive_id", names)
         self.assertIn("keepalive_payload", names)
         self.assertIn("dbc_file", names)
+
+
+    def test_fd_timing_preset_sets_j2284_5_values(self) -> None:
+        args = cli_config.build_args(
+            "fdcheck",
+            cli_config.FDCHECK_DEFAULTS,
+            {"fd_timing_preset": "sae-j2284-5"},
+        )
+        self.assertEqual(args.fd_timing_preset, "sae-j2284-5")
+        self.assertEqual(args.bitrate, 500000)
+        self.assertEqual(args.data_bitrate, 5000000)
+        self.assertEqual(args.fd_clock, 80000000)
+        self.assertEqual(args.nominal_sample_point, 87.5)
+        self.assertEqual(args.data_sample_point, 80.0)
+
+    def test_fd_timing_preset_keeps_cli_bitrate_override(self) -> None:
+        args = cli_config.build_args(
+            "fdcheck",
+            cli_config.FDCHECK_DEFAULTS,
+            {"fd_timing_preset": "sae-j2284-5", "data_bitrate": "2000000"},
+        )
+        self.assertEqual(args.fd_timing_preset, "sae-j2284-5")
+        self.assertEqual(args.bitrate, 500000)
+        self.assertEqual(args.data_bitrate, 2000000)
+
+    def test_fd_timing_preset_aliases_are_normalized(self) -> None:
+        args = cli_config.build_args(
+            "fuzz",
+            cli_config.FUZZ_DEFAULTS,
+            {"fd_timing_preset": "500k/5m"},
+        )
+        self.assertEqual(args.fd_timing_preset, "sae-j2284-5")
+        self.assertEqual(args.bitrate, 500000)
+        self.assertEqual(args.data_bitrate, 5000000)
 
     def test_fuzz_keepalive_config_uses_preset_and_overrides(self) -> None:
         args = SimpleNamespace(
@@ -118,7 +153,7 @@ class CliTests(unittest.TestCase):
             "latency_ms": 50.0,
             "error": "",
         }
-        with patch.object(log.console, "log", lambda message, *_args, **_kwargs: messages.append(str(message))):
+        with patch.object(log, "log", lambda message, *_args, **_kwargs: messages.append(str(message))):
             log.log_can_event(snapshot)
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0], ">> [CAN 1/1] { 0x000007DF [3] 02 3E 00                } -> no_response")
@@ -144,9 +179,9 @@ class CliTests(unittest.TestCase):
         )
         with (
             patch.object(cli._fuzz_click, "main", side_effect=KeyboardInterrupt),
-            patch.object(cli.console, "warning", lambda message, **_kwargs: messages.append(str(message))),
-            patch.object(cli.console, "info", lambda message, **_kwargs: messages.append(str(message))),
-            patch.object(cli.console, "log", lambda message, *_args, **_kwargs: messages.append(str(message))),
+            patch.object(log, "warning", lambda message, **_kwargs: messages.append(str(message))),
+            patch.object(log, "info", lambda message, **_kwargs: messages.append(str(message))),
+            patch.object(log, "log", lambda message, *_args, **_kwargs: messages.append(str(message))),
         ):
             with self.assertRaises(SystemExit) as raised:
                 cli.fuzz_main()
@@ -178,14 +213,14 @@ class CliTests(unittest.TestCase):
     def test_resolve_interface_auto_selects_single_detection(self) -> None:
         args = SimpleNamespace(interfaces=None, include_virtual=False, verbose=False, json=False)
         configs = [{"interface": "pcan", "channel": "PCAN_USBBUS1"}]
-        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(commands.console, "warning", lambda *a, **k: None), patch.object(commands.console, "info", lambda *a, **k: None):
+        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
             interface, channel = commands.resolve_interface_and_channel(args, "fuzz")
         self.assertEqual((interface, channel), ("pcan", "PCAN_USBBUS1"))
 
     def test_resolve_interface_uses_discovery_when_channel_missing(self) -> None:
         args = SimpleNamespace(interface="pcan", channel=None, interfaces=None, include_virtual=False, verbose=False, json=False)
         configs = [{"interface": "pcan", "channel": "PCAN_USBBUS1"}]
-        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(commands.console, "warning", lambda *a, **k: None), patch.object(commands.console, "info", lambda *a, **k: None):
+        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
             interface, channel = commands.resolve_interface_and_channel(args, "fuzz")
         self.assertEqual((interface, channel), ("pcan", "PCAN_USBBUS1"))
 
@@ -195,7 +230,7 @@ class CliTests(unittest.TestCase):
             {"interface": "pcan", "channel": "PCAN_USBBUS1"},
             {"interface": "vector", "channel": "vcan0"},
         ]
-        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(commands.console, "warning", lambda *a, **k: None), patch.object(commands.console, "info", lambda *a, **k: None), patch("builtins.input", return_value="2"):
+        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None), patch("builtins.input", return_value="2"):
             interface, channel = commands.resolve_interface_and_channel(args, "scan")
         self.assertEqual((interface, channel), ("vector", "vcan0"))
 
@@ -221,4 +256,8 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+
 

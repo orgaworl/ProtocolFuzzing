@@ -61,3 +61,5 @@ class CANFrame:
             frame_type=frame_type,
             timestamp_ms=timestamp_ms,
         )
+
+

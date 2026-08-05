@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from can_fuzzing.fuzzers.uds import UDSFuzzConfig, build_request
+from can_fuzzing.fuzzing.uds import UDSFuzzConfig, build_request
 
 
 class UDSFuzzerTests(unittest.TestCase):
@@ -22,3 +22,4 @@ class UDSFuzzerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

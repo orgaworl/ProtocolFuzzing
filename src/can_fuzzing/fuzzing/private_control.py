@@ -8,11 +8,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..adapters import CANHardwareAdapter
-from ..common.fuzzing_utils import report_progress, should_report_progress
-from ..common.keepalive import KeepaliveConfig, KeepaliveSession
-from ..common.protocol_dictionary import PRIVATE_OPCODES, PRIVATE_TARGET_IDS
-from ..models import CANFrame, FrameFormat, FrameType
+from ..runtime.adapters import CANHardwareAdapter
+from .utils import report_progress, should_report_progress
+from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
+from .protocol_dictionary import PRIVATE_OPCODES, PRIVATE_TARGET_IDS
+from ..runtime.models import CANFrame, FrameFormat, FrameType
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,9 @@ class PrivateFuzzConfig:
     extended: bool = False
     fd: bool = False
     data_bitrate: int | None = None
+    fd_clock: int = 80000000
+    nominal_sample_point: float = 87.5
+    data_sample_point: float = 80.0
     progress_interval: int = 100
     progress_seconds: float = 1.0
     keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
@@ -89,6 +92,9 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[
         receive_timeout=config.receive_timeout,
         fd=config.fd,
         data_bitrate=config.data_bitrate,
+        fd_clock=config.fd_clock,
+        nominal_sample_point=config.nominal_sample_point,
+        data_sample_point=config.data_sample_point,
     ) as adapter, KeepaliveSession(
         adapter,
         config.keepalive,
@@ -375,3 +381,5 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+

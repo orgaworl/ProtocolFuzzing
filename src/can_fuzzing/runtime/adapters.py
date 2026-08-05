@@ -48,8 +48,12 @@ class CANHardwareAdapter:
         receive_timeout: float = 0.05,
         fd: bool = False,
         data_bitrate: int | None = None,
+        fd_clock: int = 80000000,
+        nominal_sample_point: float = 87.5,
+        data_sample_point: float = 80.0,
         timing: Any | None = None,
         check_message: bool = True,
+        drop_echo: bool = True,
     ) -> None:
         self.interface = interface
         self.channel = channel
@@ -57,8 +61,12 @@ class CANHardwareAdapter:
         self.receive_timeout = receive_timeout
         self.fd = fd
         self.data_bitrate = data_bitrate
+        self.fd_clock = fd_clock
+        self.nominal_sample_point = nominal_sample_point
+        self.data_sample_point = data_sample_point
         self.timing = timing
         self.check_message = check_message
+        self.drop_echo = drop_echo
         self._bus: Any = None
         self._io_lock = threading.RLock()
 
@@ -82,11 +90,20 @@ class CANHardwareAdapter:
         }
         if self.bitrate is not None:
             kwargs["bitrate"] = self.bitrate
+        timing = self.timing
+        if self.fd and timing is None and self.interface == "pcan" and self.bitrate is not None and self.data_bitrate is not None:
+            timing = build_fd_timing(
+                fd_clock=self.fd_clock,
+                bitrate=self.bitrate,
+                data_bitrate=self.data_bitrate,
+                nominal_sample_point=self.nominal_sample_point,
+                data_sample_point=self.data_sample_point,
+            )
         if self.fd:
             kwargs["fd"] = True
-        if self.timing is not None:
-            kwargs["timing"] = self.timing
-        if self.data_bitrate is not None:
+        if timing is not None:
+            kwargs["timing"] = timing
+        if self.data_bitrate is not None and timing is None:
             kwargs["data_bitrate"] = self.data_bitrate
         kwargs["receive_own_messages"] = False
 
@@ -160,6 +177,8 @@ class CANHardwareAdapter:
                     )
                 if response is None:
                     break
+                if self.drop_echo and self._is_echo_message(message, response):
+                    continue
                 if response.is_rx:
                     responses.append(response)
 
@@ -217,6 +236,17 @@ class CANHardwareAdapter:
             if msg is None:
                 return
 
+    @staticmethod
+    def _is_echo_message(sent_message: Any, received_message: Any) -> bool:
+        return (
+            getattr(received_message, "arbitration_id", None) == getattr(sent_message, "arbitration_id", None)
+            and bytes(getattr(received_message, "data", b"")) == bytes(getattr(sent_message, "data", b""))
+            and getattr(received_message, "is_extended_id", None) == getattr(sent_message, "is_extended_id", None)
+            and getattr(received_message, "is_remote_frame", None) == getattr(sent_message, "is_remote_frame", None)
+            and getattr(received_message, "is_error_frame", None) == getattr(sent_message, "is_error_frame", None)
+            and getattr(received_message, "is_fd", None) == getattr(sent_message, "is_fd", None)
+        )
+
     def _build_message(self, frame: CANFrame, is_fd: bool | None = None, check_message: bool | None = None):
         try:
             import can
@@ -231,6 +261,30 @@ class CANHardwareAdapter:
             is_fd=self.fd if is_fd is None else is_fd,
             check=self.check_message if check_message is None else check_message,
         )
+
+
+
+def build_fd_timing(
+    fd_clock: int,
+    bitrate: int,
+    data_bitrate: int,
+    nominal_sample_point: float = 87.5,
+    data_sample_point: float = 80.0,
+):
+    try:
+        from can import BitTimingFd
+    except ImportError as exc:
+        raise CANConnectionError("python-can is required for CAN FD timing generation") from exc
+    try:
+        return BitTimingFd.from_sample_point(
+            f_clock=fd_clock,
+            nom_bitrate=bitrate,
+            nom_sample_point=nominal_sample_point,
+            data_bitrate=data_bitrate,
+            data_sample_point=data_sample_point,
+        )
+    except ValueError as exc:
+        raise CANConnectionError(f"invalid CAN FD timing parameters: {exc}") from exc
 
 
 def build_unknown_channel_message(interface: str, channel: str) -> str:
@@ -297,6 +351,8 @@ def channel_status_hint(interface: str, channel: str) -> list[str]:
             return ["The PCAN channel is occupied by PCAN-View or another PCAN client."]
         return [f"The PCAN channel reported condition {condition}."]
     return ["For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel."]
+
+
 
 
 

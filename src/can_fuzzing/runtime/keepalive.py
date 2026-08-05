@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Any
 
-from ..adapters import CANHardwareAdapter
-from ..models import CANFrame, FrameFormat, FrameType
+from .adapters import CANHardwareAdapter
+from .models import CANFrame, FrameFormat, FrameType
 
 
 @dataclass(frozen=True)
@@ -196,3 +196,6 @@ class KeepaliveSession:
 
 def keepalive_response_fieldnames() -> list[str]:
     return ["timestamp", "arbitration_id", "dlc", "payload_hex", "fd"]
+
+
+

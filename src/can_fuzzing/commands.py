@@ -7,25 +7,24 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from .adapters import CANConnectionError, CANHardwareAdapter
-from .common import console
-from .common.keepalive import KeepaliveConfig, KeepaliveWorker
-from .cli_config import (
+from .runtime.adapters import CANConnectionError, CANHardwareAdapter
+from .runtime.keepalive import KeepaliveConfig, KeepaliveWorker
+from .config import (
     build_fuzz_keepalive_config,
     normalize_protocol,
     parse_hex_bytes,
     parse_interface_names,
     parse_int_list,
 )
-from .discovery import list_can_interfaces
-from .fdcheck import FDCheckConfig, run_fdcheck
-from .fuzzers.can import FuzzConfig, run_fuzzing
-from .fuzzers.dbc import DBCFuzzConfig, run_dbc_fuzzing
-from .fuzzers.obd import OBDFuzzConfig, run_obd_fuzzing
-from .fuzzers.private_control import PrivateFuzzConfig, run_private_fuzzing
-from .fuzzers.uds import UDSFuzzConfig, run_uds_fuzzing
-from .plotting import plot_results
-from .scanner import ScanConfig, run_scan
+from .runtime.discovery import list_can_interfaces
+from .runtime.fdcheck import FDCheckConfig, run_fdcheck
+from .fuzzing.can import FuzzConfig, run_fuzzing
+from .fuzzing.dbc import DBCFuzzConfig, run_dbc_fuzzing
+from .fuzzing.obd import OBDFuzzConfig, run_obd_fuzzing
+from .fuzzing.private_control import PrivateFuzzConfig, run_private_fuzzing
+from .fuzzing.uds import UDSFuzzConfig, run_uds_fuzzing
+from .runtime.plotting import plot_results
+from .runtime.scanner import ScanConfig, run_scan
 from .log import (
     format_bool,
     log_can_event,
@@ -79,6 +78,9 @@ def run_can_fuzz_from_args(args: SimpleNamespace) -> None:
         inter_frame_delay_ms=args.inter_frame_delay_ms,
         fd=args.fd,
         data_bitrate=args.data_bitrate,
+        fd_clock=args.fd_clock,
+        nominal_sample_point=args.nominal_sample_point,
+        data_sample_point=args.data_sample_point,
         id_min=args.id_min,
         id_max=args.id_max,
         diagnostic_bias=args.diagnostic_bias,
@@ -125,6 +127,9 @@ def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
         inter_frame_delay_ms=args.inter_frame_delay_ms,
         fd=args.fd,
         data_bitrate=args.data_bitrate,
+        fd_clock=args.fd_clock,
+        nominal_sample_point=args.nominal_sample_point,
+        data_sample_point=args.data_sample_point,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
         keepalive=build_fuzz_keepalive_config(args),
@@ -291,6 +296,9 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
         inter_probe_delay_ms=args.inter_probe_delay_ms,
         fd=args.fd,
         data_bitrate=args.data_bitrate,
+        fd_clock=args.fd_clock,
+        nominal_sample_point=args.nominal_sample_point,
+        data_sample_point=args.data_sample_point,
         active=active,
         passive=passive,
         physical_start=args.physical_start,
@@ -325,6 +333,7 @@ def run_fdcheck_from_args(args: SimpleNamespace) -> None:
         channel=args.channel,
         bitrate=args.bitrate,
         data_bitrate=args.data_bitrate,
+        fd_timing_preset=args.fd_timing_preset,
         fd_clock=args.fd_clock,
         nominal_sample_point=args.nominal_sample_point,
         data_sample_point=args.data_sample_point,
@@ -334,7 +343,7 @@ def run_fdcheck_from_args(args: SimpleNamespace) -> None:
         probe_delay_ms=args.probe_delay_ms,
     )
     start_run_summary("fdcheck", "fdcheck", config.campaign, len(config.probe_lengths) * 4)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "data_bitrate": config.data_bitrate, "fd_clock": config.fd_clock, "fd": True})
+    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "data_bitrate": config.data_bitrate, "fd_timing_preset": config.fd_timing_preset, "fd_clock": config.fd_clock, "fd": True})
     try:
         result = run_fdcheck(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
@@ -447,6 +456,9 @@ def run_privatefuzz_from_args(args: SimpleNamespace) -> None:
         extended=args.extended,
         fd=args.fd,
         data_bitrate=args.data_bitrate,
+        fd_clock=args.fd_clock,
+        nominal_sample_point=args.nominal_sample_point,
+        data_sample_point=args.data_sample_point,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
         keepalive=build_fuzz_keepalive_config(args),
@@ -465,6 +477,7 @@ def run_privatefuzz_from_args(args: SimpleNamespace) -> None:
     log_structured("debug", "coverage", {"targets": result.unique_targets, "opcodes": result.unique_opcodes, "points": result.coverage_points})
     log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
+
 def clean_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     for child in path.iterdir():
@@ -474,3 +487,18 @@ def clean_directory(path: Path) -> None:
             shutil.rmtree(child)
         else:
             child.unlink()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

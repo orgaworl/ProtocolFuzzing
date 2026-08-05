@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import unittest
 
-from can_fuzzing.common.protocol_dictionary import (
+from can_fuzzing.fuzzing.protocol_dictionary import (
     COMMON_AFL_DICTIONARY_ENTRIES,
     COMMON_CAN_IDS,
     COMMON_DIAGNOSTIC_TEMPLATES,
@@ -34,3 +34,4 @@ class ProtocolDictionaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

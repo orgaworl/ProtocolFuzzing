@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .adapters import CANConnectionError, CANHardwareAdapter
+from .adapters import CANConnectionError, CANHardwareAdapter, build_fd_timing
 from .discovery import list_can_interfaces
 from .models import CANFrame, FrameFormat, FrameType
 
@@ -18,6 +18,7 @@ class FDCheckConfig:
     channel: str
     bitrate: int | None = 500000
     data_bitrate: int | None = 2000000
+    fd_timing_preset: str | None = "sae-j2284"
     fd_clock: int = 80000000
     nominal_sample_point: float = 87.5
     data_sample_point: float = 80.0
@@ -74,7 +75,7 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
     fd_timing = None
     fd_timing_error = ""
     try:
-        fd_timing = build_fd_timing(config)
+        fd_timing = build_config_fd_timing(config)
     except ValueError as exc:
         fd_timing_error = str(exc)
     adapter_timing = fd_timing if config.interface == "pcan" else None
@@ -92,6 +93,9 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
             receive_timeout=config.probe_timeout,
             fd=True,
             data_bitrate=adapter_data_bitrate,
+            fd_clock=config.fd_clock,
+            nominal_sample_point=config.nominal_sample_point,
+            data_sample_point=config.data_sample_point,
             timing=adapter_timing,
         ) as adapter:
             hardware_fd_opened = True
@@ -156,6 +160,7 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
         "channel": config.channel,
         "bitrate": config.bitrate,
         "data_bitrate": config.data_bitrate,
+        "fd_timing_preset": config.fd_timing_preset,
         "fd_clock": config.fd_clock,
         "nominal_sample_point": config.nominal_sample_point,
         "data_sample_point": config.data_sample_point,
@@ -206,25 +211,21 @@ def detect_backend_fd_support(interface: str, channel: str) -> bool | None:
     return None
 
 
-def build_fd_timing(config: FDCheckConfig):
+def build_config_fd_timing(config: FDCheckConfig):
     if config.bitrate is None:
         raise ValueError("--bitrate is required for CAN FD timing generation")
     if config.data_bitrate is None:
         raise ValueError("--data-bitrate is required for CAN FD timing generation")
     try:
-        from can import BitTimingFd
-    except ImportError as exc:
-        raise ValueError("python-can is required for CAN FD timing generation") from exc
-    try:
-        return BitTimingFd.from_sample_point(
-            f_clock=config.fd_clock,
-            nom_bitrate=config.bitrate,
-            nom_sample_point=config.nominal_sample_point,
+        return build_fd_timing(
+            fd_clock=config.fd_clock,
+            bitrate=config.bitrate,
             data_bitrate=config.data_bitrate,
+            nominal_sample_point=config.nominal_sample_point,
             data_sample_point=config.data_sample_point,
         )
-    except ValueError as exc:
-        raise ValueError(f"invalid CAN FD timing parameters: {exc}") from exc
+    except CANConnectionError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 class SkipFDOpen(Exception):
@@ -350,3 +351,5 @@ def parse_hex_id_list(value: str) -> list[int]:
 
 def split_payload_list(value: str) -> list[str]:
     return [item for item in value.split(";") if item]
+
+

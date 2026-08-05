@@ -8,11 +8,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...adapters import CANHardwareAdapter
-from ...common import console
-from ...common.fuzzing_utils import report_progress, should_report_progress
-from ...common.keepalive import KeepaliveConfig, KeepaliveSession
-from ...models import CANFrame, FrameFormat, FrameType
+from ...runtime.adapters import CANHardwareAdapter
+from ...log import warning
+from ..utils import report_progress, should_report_progress
+from ...runtime.keepalive import KeepaliveConfig, KeepaliveSession
+from ...runtime.models import CANFrame, FrameFormat, FrameType
 from .database import DBCDatabase, load_dbc_database
 from .strategy import DBCRequest, build_request
 
@@ -31,6 +31,9 @@ class DBCFuzzConfig:
     inter_frame_delay_ms: float = 5.0
     fd: bool = False
     data_bitrate: int | None = None
+    fd_clock: int = 80000000
+    nominal_sample_point: float = 87.5
+    data_sample_point: float = 80.0
     progress_interval: int = 100
     progress_seconds: float = 1.0
     keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
@@ -76,7 +79,7 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: Callable[[dict], N
     last_progress = time.monotonic()
 
     if database.requires_fd and not config.fd:
-        console.warning("DBC file contains frames larger than 8 bytes; enabling CAN FD automatically")
+        warning("DBC file contains frames larger than 8 bytes; enabling CAN FD automatically")
 
     with CANHardwareAdapter(
         interface=config.interface,
@@ -85,6 +88,9 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: Callable[[dict], N
         receive_timeout=config.receive_timeout,
         fd=use_fd,
         data_bitrate=config.data_bitrate,
+        fd_clock=config.fd_clock,
+        nominal_sample_point=config.nominal_sample_point,
+        data_sample_point=config.data_sample_point,
     ) as adapter, KeepaliveSession(
         adapter,
         config.keepalive,
@@ -339,3 +345,7 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+
+
+

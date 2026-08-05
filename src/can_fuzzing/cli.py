@@ -6,13 +6,13 @@ from typing import Any
 
 import click
 
-from .common import console
-from .cli_config import (
+from .config import (
     CLEAN_DEFAULTS,
     FDCHECK_DEFAULTS,
     FUZZ_DEFAULTS,
     KEEPALIVE_DEFAULTS,
     KEEPALIVE_PRESETS,
+    CAN_FD_TIMING_PRESETS,
     LIST_DEFAULTS,
     PLOT_DEFAULTS,
     SCAN_DEFAULTS,
@@ -28,7 +28,7 @@ from .commands import (
     run_plot_from_args,
     run_scan_from_args,
 )
-from .log import print_keyboard_interrupt_summary
+from .log import configure_logging, print_keyboard_interrupt_summary
 
 
 CLICK_CONTEXT = {"help_option_names": ["-h", "--help"]}
@@ -61,7 +61,7 @@ def click_invoked_without_options(ctx: click.Context) -> bool:
 
 
 def invoke_click(command: click.Command, prog_name: str) -> None:
-    console.configure_logging(logging.DEBUG)
+    configure_logging(logging.DEBUG)
     try:
         command.main(prog_name=prog_name, standalone_mode=False)
     except (KeyboardInterrupt, click.Abort) as exc:
@@ -97,7 +97,11 @@ FUZZ_OPTIONS = [
     (("--pid-bias",), {"type": float, "default": None, "help": "OBD common PID probability"}),
     (("--malformed-rate",), {"type": float, "default": None, "help": "malformed request probability"}),
     (("--fd/--no-fd",), {"default": None, "help": "send CAN FD frames"}),
+    (("--fd-timing-preset",), {"type": click.Choice(sorted(CAN_FD_TIMING_PRESETS)), "default": None, "help": "CAN FD timing preset"}),
     (("--data-bitrate",), {"default": None, "help": "CAN FD data bitrate, or none"}),
+    (("--fd-clock",), {"type": int, "default": None, "help": "CAN FD controller clock in Hz"}),
+    (("--nominal-sample-point",), {"type": float, "default": None, "help": "nominal-phase sample point percent"}),
+    (("--data-sample-point",), {"type": float, "default": None, "help": "data-phase sample point percent"}),
     (("--id-min",), {"default": None, "help": "minimum arbitration ID"}),
     (("--id-max",), {"default": None, "help": "maximum arbitration ID"}),
     (("--diagnostic-bias",), {"type": float, "default": None, "help": "CAN diagnostic ID probability"}),
@@ -165,6 +169,10 @@ def _list_click(**params: Any) -> None:
     (("--verbose/--no-verbose",), {"default": None, "help": "show backend discovery warnings"}),
     (("--bitrate",), {"default": None, "help": "arbitration bitrate, or none"}),
     (("--data-bitrate",), {"default": None, "help": "CAN FD data bitrate, or none"}),
+    (("--fd-timing-preset",), {"type": click.Choice(sorted(CAN_FD_TIMING_PRESETS)), "default": None, "help": "CAN FD timing preset"}),
+    (("--fd-clock",), {"type": int, "default": None, "help": "CAN FD controller clock in Hz"}),
+    (("--nominal-sample-point",), {"type": float, "default": None, "help": "nominal-phase sample point percent"}),
+    (("--data-sample-point",), {"type": float, "default": None, "help": "data-phase sample point percent"}),
     (("--fd/--no-fd",), {"default": None, "help": "send the activation frame as CAN FD"}),
     (("--arbitration-id",), {"default": None, "help": "activation frame arbitration ID"}),
     (("--payload",), {"default": None, "help": "activation frame hex payload"}),
@@ -189,6 +197,7 @@ def _keepalive_click(**params: Any) -> None:
     (("--verbose/--no-verbose",), {"default": None, "help": "show backend discovery warnings"}),
     (("--bitrate",), {"default": None, "help": "arbitration bitrate, or none"}),
     (("--data-bitrate",), {"default": None, "help": "CAN FD data-phase bitrate, or none"}),
+    (("--fd-timing-preset",), {"type": click.Choice(sorted(CAN_FD_TIMING_PRESETS)), "default": None, "help": "CAN FD timing preset"}),
     (("--fd-clock",), {"type": int, "default": None, "help": "CAN FD controller clock in Hz"}),
     (("--nominal-sample-point",), {"type": float, "default": None, "help": "nominal-phase sample point percent"}),
     (("--data-sample-point",), {"type": float, "default": None, "help": "data-phase sample point percent"}),
@@ -220,7 +229,11 @@ def _fdcheck_click(**params: Any) -> None:
     (("--physical-start",), {"default": None, "help": "first physical diagnostic request ID"}),
     (("--physical-end",), {"default": None, "help": "last physical diagnostic request ID"}),
     (("--fd/--no-fd",), {"default": None, "help": "open CAN FD mode"}),
+    (("--fd-timing-preset",), {"type": click.Choice(sorted(CAN_FD_TIMING_PRESETS)), "default": None, "help": "CAN FD timing preset"}),
     (("--data-bitrate",), {"default": None, "help": "CAN FD data bitrate, or none"}),
+    (("--fd-clock",), {"type": int, "default": None, "help": "CAN FD controller clock in Hz"}),
+    (("--nominal-sample-point",), {"type": float, "default": None, "help": "nominal-phase sample point percent"}),
+    (("--data-sample-point",), {"type": float, "default": None, "help": "data-phase sample point percent"}),
     (("--passive-only/--no-passive-only",), {"default": None, "help": "run passive listening only"}),
     (("--active-only/--no-active-only",), {"default": None, "help": "run active probing only"}),
     (("--no-progress/--progress",), {"default": None, "help": "compatibility flag; logs are line-based"}),
@@ -255,5 +268,11 @@ def fdcheck_main() -> None:
 
 def scan_main() -> None:
     invoke_click(_scan_click, "scan")
+
+
+
+
+
+
 
 

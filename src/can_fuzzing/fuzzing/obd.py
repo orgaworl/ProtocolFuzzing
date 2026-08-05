@@ -8,55 +8,43 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..adapters import CANHardwareAdapter
-from ..common.keepalive import KeepaliveConfig, KeepaliveSession
-from ..common.fuzzing_utils import (
+from ..runtime.adapters import CANHardwareAdapter
+from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
+from .utils import (
     decode_isotp_payload,
     encode_isotp_single_frame,
     random_bytes,
     report_progress,
     should_report_progress,
 )
-from ..common.protocol_dictionary import (
-    UDS_COMMUNICATION_SUBFUNCTIONS,
-    UDS_DIDS,
-    UDS_DTC_SETTING_VALUES,
-    UDS_DTC_STATUS_MASKS,
-    UDS_ECU_RESET_TYPES,
-    UDS_ROUTINE_SUBFUNCTIONS,
-    UDS_SECURITY_SUBFUNCTIONS,
-    UDS_SESSION_LEVELS,
-    UDS_SERVICE_NAMES,
-    UDS_SERVICE_POOL,
-    UDS_TESTER_PRESENT_SUBFUNCTIONS,
-)
-from ..models import CANFrame, FrameFormat, FrameType
+from .protocol_dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
+from ..runtime.models import CANFrame, FrameFormat, FrameType
 
 
 @dataclass(frozen=True)
-class UDSFuzzConfig:
+class OBDFuzzConfig:
     cases: int = 1000
-    seed: int = 2024
-    campaign: str = "uds_baseline"
+    seed: int = 2025
+    campaign: str = "obd_baseline"
     output_dir: Path = Path("result")
     interface: str = "socketcan"
     channel: str = "can0"
     bitrate: int | None = 500000
     receive_timeout: float = 0.15
-    inter_request_delay_ms: float = 10.0
-    request_mode: str = "mixed"
+    inter_request_delay_ms: float = 20.0
+    request_mode: str = "functional"
     functional_id: int = 0x7DF
     physical_start: int = 0x7E0
     physical_end: int = 0x7E7
-    service_bias: float = 0.85
-    malformed_rate: float = 0.15
+    pid_bias: float = 0.8
+    malformed_rate: float = 0.1
     progress_interval: int = 100
     progress_seconds: float = 1.0
     keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
 
 
 @dataclass(frozen=True)
-class UDSFuzzResult:
+class OBDFuzzResult:
     campaign: str
     cases: int
     completed_cases: int
@@ -66,24 +54,24 @@ class UDSFuzzResult:
     responses: int
     positive_responses: int
     negative_responses: int
-    multi_frame_responses: int
-    unique_services: int
-    unique_nrcs: int
+    unique_modes: int
+    unique_pids: int
     csv_path: Path
     summary_path: Path
 
 
 @dataclass(frozen=True)
-class UDSRequest:
+class OBDRequest:
     request_id: int
     request_mode: str
-    service_id: int
-    service_name: str
+    obd_mode: int
+    mode_name: str
+    pid: int | None
     application_payload: bytes
     is_malformed: bool
 
 
-def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> UDSFuzzResult:
+def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> OBDFuzzResult:
     rng = random.Random(config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -95,11 +83,10 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
     responses = 0
     positive_responses = 0
     negative_responses = 0
-    multi_frame_responses = 0
     completed_cases = 0
     interrupted = False
-    services_seen: set[str] = set()
-    nrcs_seen: set[str] = set()
+    modes_seen: set[str] = set()
+    pids_seen: set[str] = set()
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
@@ -124,29 +111,27 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
             for case_id in range(config.cases):
                 request = build_request(rng, config)
                 isotp_payload = encode_isotp_single_frame(request.application_payload)
-                frame = CANFrame.from_ints(
-                    request.request_id,
-                    isotp_payload,
-                    FrameFormat.STANDARD,
-                    FrameType.DATA,
-                )
+                frame = CANFrame.from_ints(request.request_id, isotp_payload, FrameFormat.STANDARD, FrameType.DATA)
                 observation = adapter.transact(frame)
 
                 sent += int(observation.sent)
                 faults += int(observation.fault)
-                responses += observation.response_count
+                response_ids = observation.response_ids
+                response_payloads = observation.response_payloads
+                response_count = len(response_payloads)
+                responses += response_count
 
-                response_summary = summarize_responses(observation.response_payloads, request.service_id)
+                response_summary = summarize_responses(response_payloads, request.obd_mode)
                 positive_responses += response_summary["positive"]
                 negative_responses += response_summary["negative"]
-                multi_frame_responses += response_summary["multi_frame"]
-                services_seen.add(request.service_name)
-                nrcs_seen.update(response_summary["nrcs"])
-                coverage.update(build_coverage_points(request, response_summary, observation))
+                modes_seen.add(request.mode_name)
+                if request.pid is not None:
+                    pids_seen.add(f"0x{request.pid:02x}")
+                coverage.update(build_coverage_points(request, response_summary, response_ids))
                 report_progress(
                     progress_callback,
                     event="can_exchange",
-                    protocol="uds",
+                    protocol="obd",
                     case_id=case_id,
                     total_cases=config.cases,
                     tx_id=frame.identifier,
@@ -159,14 +144,15 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
                     fault=observation.fault,
                     state=observation.state,
                     reason=observation.reason,
-                    response_count=observation.response_count,
-                    response_ids=observation.response_ids,
-                    response_payloads=observation.response_payloads,
+                    response_count=response_count,
+                    response_ids=response_ids,
+                    response_payloads=response_payloads,
                     latency_ms=observation.latency_ms,
                     error=observation.error,
                     request_mode=request.request_mode,
-                    service_id=request.service_id,
-                    service_name=request.service_name,
+                    obd_mode=request.obd_mode,
+                    mode_name=request.mode_name,
+                    pid=request.pid,
                     application_payload=request.application_payload.hex(),
                     response_kind=response_summary["kind"],
                 )
@@ -177,20 +163,19 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
                         "timestamp_ms": case_id,
                         "request_id": f"0x{request.request_id:x}",
                         "request_mode": request.request_mode,
-                        "service_id": f"0x{request.service_id:02x}",
-                        "service_name": request.service_name,
+                        "obd_mode": f"0x{request.obd_mode:02x}",
+                        "mode_name": request.mode_name,
+                        "pid": "" if request.pid is None else f"0x{request.pid:02x}",
                         "is_malformed": int(request.is_malformed),
                         "application_payload_hex": request.application_payload.hex(),
                         "isotp_payload_hex": isotp_payload.hex(),
                         "sent": int(observation.sent),
                         "fault": int(observation.fault),
-                        "response_count": observation.response_count,
-                        "response_ids": ";".join(f"0x{value:x}" for value in observation.response_ids),
-                        "response_payloads": ";".join(observation.response_payloads),
+                        "response_count": response_count,
+                        "response_ids": ";".join(f"0x{value:x}" for value in response_ids),
+                        "response_payloads": ";".join(response_payloads),
                         "positive_responses": response_summary["positive"],
                         "negative_responses": response_summary["negative"],
-                        "multi_frame_responses": response_summary["multi_frame"],
-                        "nrcs": ";".join(response_summary["nrcs"]),
                         "response_kind": response_summary["kind"],
                         "latency_ms": f"{observation.latency_ms:.3f}",
                         "error": observation.error,
@@ -247,13 +232,12 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
         interrupted=interrupted,
         positive_responses=positive_responses,
         negative_responses=negative_responses,
-        multi_frame_responses=multi_frame_responses,
-        services_seen=services_seen,
-        nrcs_seen=nrcs_seen,
+        modes_seen=modes_seen,
+        pids_seen=pids_seen,
         coverage=coverage,
     )
 
-    return UDSFuzzResult(
+    return OBDFuzzResult(
         campaign=config.campaign,
         cases=config.cases,
         completed_cases=completed_cases,
@@ -263,165 +247,106 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
         responses=responses,
         positive_responses=positive_responses,
         negative_responses=negative_responses,
-        multi_frame_responses=multi_frame_responses,
-        unique_services=len(services_seen),
-        unique_nrcs=len(nrcs_seen),
+        unique_modes=len(modes_seen),
+        unique_pids=len(pids_seen),
         csv_path=csv_path,
         summary_path=summary_path,
     )
 
 
-def build_request(rng: random.Random, config: UDSFuzzConfig) -> UDSRequest:
+def build_request(rng: random.Random, config: OBDFuzzConfig) -> OBDRequest:
     request_mode = choose_request_mode(rng, config)
     request_id = choose_request_id(rng, request_mode, config)
     malformed = rng.random() < config.malformed_rate
+    obd_mode = choose_mode(rng)
+    pid = choose_pid(rng, config) if mode_uses_pid(obd_mode) else None
 
     if malformed:
-        service_id = rng.choice(UDS_SERVICE_POOL + (rng.randrange(0x00, 0x100),))
-        payload = build_malformed_payload(rng, service_id)
-        return UDSRequest(
-            request_id=request_id,
-            request_mode=request_mode,
-            service_id=service_id,
-            service_name=UDS_SERVICE_NAMES.get(service_id, "malformed"),
-            application_payload=payload,
-            is_malformed=True,
-        )
+        payload_length = rng.randint(1, 7)
+        payload = bytes([obd_mode, *random_bytes(rng, payload_length - 1)])
+    else:
+        payload = build_obd_payload(obd_mode, pid)
 
-    service_id = choose_service_id(rng, config)
-    payload = build_service_payload(rng, service_id)
-    return UDSRequest(
+    return OBDRequest(
         request_id=request_id,
         request_mode=request_mode,
-        service_id=service_id,
-        service_name=UDS_SERVICE_NAMES.get(service_id, f"service_0x{service_id:02x}"),
+        obd_mode=obd_mode,
+        mode_name=OBD_MODE_NAMES.get(obd_mode, f"mode_0x{obd_mode:02x}"),
+        pid=pid,
         application_payload=payload,
-        is_malformed=False,
+        is_malformed=malformed,
     )
 
 
-def choose_request_mode(rng: random.Random, config: UDSFuzzConfig) -> str:
+def choose_request_mode(rng: random.Random, config: OBDFuzzConfig) -> str:
     if config.request_mode in {"functional", "physical"}:
         return config.request_mode
-    return rng.choices(["functional", "physical"], weights=[0.7, 0.3], k=1)[0]
+    return rng.choices(["functional", "physical"], weights=[0.8, 0.2], k=1)[0]
 
 
-def choose_request_id(rng: random.Random, request_mode: str, config: UDSFuzzConfig) -> int:
+def choose_request_id(rng: random.Random, request_mode: str, config: OBDFuzzConfig) -> int:
     if request_mode == "functional":
         return config.functional_id
     return rng.randint(config.physical_start, config.physical_end)
 
 
-def choose_service_id(rng: random.Random, config: UDSFuzzConfig) -> int:
-    if rng.random() < config.service_bias:
-        return rng.choice(UDS_SERVICE_POOL)
+def choose_mode(rng: random.Random) -> int:
+    if rng.random() < 0.9:
+        return rng.choice(OBD_MODE_POOL)
+    return rng.randrange(0x01, 0x10)
+
+
+def choose_pid(rng: random.Random, config: OBDFuzzConfig) -> int:
+    if rng.random() < config.pid_bias:
+        return rng.choice(COMMON_OBD_PIDS)
     return rng.randrange(0x00, 0x100)
 
 
-def build_service_payload(rng: random.Random, service_id: int) -> bytes:
-    if service_id == 0x10:
-        return bytes([0x10, rng.choice(UDS_SESSION_LEVELS)])
-    if service_id == 0x11:
-        return bytes([0x11, rng.choice(UDS_ECU_RESET_TYPES)])
-    if service_id == 0x14:
-        return bytes([0x14, *random_bytes(rng, 3)])
-    if service_id == 0x19:
-        return bytes([0x19, rng.choice([0x01, 0x02, 0x04, 0x06, 0x0A]), *random_bytes(rng, 3)])
-    if service_id == 0x22:
-        dids = [choose_did(rng)]
-        if rng.random() < 0.4:
-            dids.append(choose_did(rng))
-        payload = bytearray([0x22])
-        for did in dids:
-            payload.extend(did)
-        return bytes(payload[:7])
-    if service_id == 0x27:
-        subfunction = rng.choice(UDS_SECURITY_SUBFUNCTIONS)
-        payload = bytearray([0x27, subfunction])
-        payload.extend(random_bytes(rng, rng.randint(0, 5)))
-        return bytes(payload[:7])
-    if service_id == 0x28:
-        return bytes([0x28, rng.choice(UDS_COMMUNICATION_SUBFUNCTIONS), rng.choice(UDS_COMMUNICATION_SUBFUNCTIONS)])
-    if service_id == 0x2E:
-        payload = bytearray([0x2E])
-        payload.extend(choose_did(rng))
-        payload.extend(random_bytes(rng, rng.randint(0, 4)))
-        return bytes(payload[:7])
-    if service_id == 0x31:
-        payload = bytearray([0x31, rng.choice(UDS_ROUTINE_SUBFUNCTIONS)])
-        payload.extend(choose_did(rng))
-        payload.extend(random_bytes(rng, rng.randint(0, 3)))
-        return bytes(payload[:7])
-    if service_id == 0x3E:
-        return bytes([0x3E, rng.choice(UDS_TESTER_PRESENT_SUBFUNCTIONS)])
-    if service_id == 0x85:
-        return bytes([0x85, rng.choice(UDS_DTC_SETTING_VALUES)])
-
-    payload = bytearray([service_id])
-    payload.extend(random_bytes(rng, rng.randint(0, 6)))
-    return bytes(payload[:7])
+def mode_uses_pid(obd_mode: int) -> bool:
+    return obd_mode in {0x01, 0x02, 0x05, 0x06, 0x08, 0x09}
 
 
-def build_malformed_payload(rng: random.Random, service_id: int) -> bytes:
-    payload = bytearray([service_id])
-    payload.extend(random_bytes(rng, rng.randint(0, 6)))
-    if len(payload) > 1 and rng.random() < 0.5:
-        payload = payload[: rng.randint(1, len(payload))]
-    return bytes(payload[:7])
+def build_obd_payload(obd_mode: int, pid: int | None) -> bytes:
+    if mode_uses_pid(obd_mode):
+        return bytes([obd_mode, 0x00 if pid is None else pid])
+    return bytes([obd_mode])
 
 
-def summarize_responses(response_payloads: list[str], request_service: int) -> dict[str, object]:
+def summarize_responses(response_payloads: list[str], request_mode: int) -> dict[str, int | str]:
     positive = 0
     negative = 0
-    multi_frame = 0
-    nrcs: list[str] = []
     kind = "no_response"
-
+    expected_positive = (request_mode + 0x40) & 0xFF
     for raw_hex in response_payloads:
         raw = bytes.fromhex(raw_hex)
         frame_kind, app_payload = decode_isotp_payload(raw)
-        if frame_kind == "single_frame" and app_payload:
-            kind = "single_frame"
-            service_id = app_payload[0]
-            if service_id == 0x7F and len(app_payload) >= 3:
-                negative += 1
-                nrc = app_payload[2]
-                nrcs.append(f"0x{nrc:02x}")
-                kind = "negative_response"
-            elif service_id == ((request_service + 0x40) & 0xFF):
-                positive += 1
-                kind = "positive_response"
-            else:
-                kind = f"service_0x{service_id:02x}"
-        elif frame_kind in {"first_frame", "consecutive_frame"}:
-            multi_frame += 1
+        if frame_kind != "single_frame" or not app_payload:
             kind = frame_kind
-        elif frame_kind == "flow_control":
-            kind = frame_kind
+            continue
+        service = app_payload[0]
+        if service == expected_positive:
+            positive += 1
+            kind = "positive_response"
+        elif service == 0x7F:
+            negative += 1
+            kind = "negative_response"
         else:
-            kind = frame_kind
-
-    return {
-        "positive": positive,
-        "negative": negative,
-        "multi_frame": multi_frame,
-        "nrcs": nrcs,
-        "kind": kind,
-    }
+            kind = f"service_0x{service:02x}"
+    return {"positive": positive, "negative": negative, "kind": kind}
 
 
-def build_coverage_points(request: UDSRequest, response_summary: dict[str, object], observation) -> set[str]:
+def build_coverage_points(request: OBDRequest, response_summary: dict[str, int | str], response_ids: list[int]) -> set[str]:
     points = {
         f"tx_request_id_{request.request_id:x}",
-        f"tx_service_{request.service_id:02x}",
-        f"tx_mode_{request.request_mode}",
+        f"tx_mode_{request.obd_mode:02x}",
+        f"tx_addressing_{request.request_mode}",
         f"tx_malformed_{int(request.is_malformed)}",
         f"rx_kind_{response_summary['kind']}",
     }
-    for response_id in observation.response_ids:
+    if request.pid is not None:
+        points.add(f"tx_pid_{request.pid:02x}")
+    for response_id in response_ids:
         points.add(f"rx_id_{response_id:x}")
-    for nrc in response_summary["nrcs"]:
-        points.add(f"nrc_{nrc}")
     return points
 
 
@@ -431,8 +356,9 @@ def result_fieldnames() -> list[str]:
         "timestamp_ms",
         "request_id",
         "request_mode",
-        "service_id",
-        "service_name",
+        "obd_mode",
+        "mode_name",
+        "pid",
         "is_malformed",
         "application_payload_hex",
         "isotp_payload_hex",
@@ -443,8 +369,6 @@ def result_fieldnames() -> list[str]:
         "response_payloads",
         "positive_responses",
         "negative_responses",
-        "multi_frame_responses",
-        "nrcs",
         "response_kind",
         "latency_ms",
         "error",
@@ -454,7 +378,7 @@ def result_fieldnames() -> list[str]:
 
 def write_summary(
     summary_path: Path,
-    config: UDSFuzzConfig,
+    config: OBDFuzzConfig,
     csv_path: Path,
     sent: int,
     faults: int,
@@ -463,9 +387,8 @@ def write_summary(
     interrupted: bool,
     positive_responses: int,
     negative_responses: int,
-    multi_frame_responses: int,
-    services_seen: set[str],
-    nrcs_seen: set[str],
+    modes_seen: set[str],
+    pids_seen: set[str],
     coverage: set[str],
 ) -> None:
     denominator = completed_cases or 1
@@ -484,27 +407,21 @@ def write_summary(
         "functional_id": config.functional_id,
         "physical_start": config.physical_start,
         "physical_end": config.physical_end,
-        "service_bias": config.service_bias,
+        "pid_bias": config.pid_bias,
         "malformed_rate": config.malformed_rate,
         "sent": sent,
         "faults": faults,
         "responses": responses,
         "positive_responses": positive_responses,
         "negative_responses": negative_responses,
-        "multi_frame_responses": multi_frame_responses,
         "send_rate": sent / denominator,
         "fault_rate": faults / denominator,
         "response_rate": responses / denominator,
-        "unique_services": len(services_seen),
-        "unique_nrcs": len(nrcs_seen),
+        "unique_modes": len(modes_seen),
+        "unique_pids": len(pids_seen),
         "coverage_points": len(coverage),
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
-def choose_did(rng: random.Random) -> bytes:
-    if rng.random() < 0.85:
-        return rng.choice(UDS_DIDS)
-    did = rng.randrange(0x0000, 0xFFFF)
-    return bytes([(did >> 8) & 0xFF, did & 0xFF])

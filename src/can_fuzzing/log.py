@@ -1,10 +1,117 @@
 from __future__ import annotations
 
+import logging
+import os
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
-from .common import console
-from .common.keepalive import KeepaliveConfig
+from .runtime.keepalive import KeepaliveConfig
+
+
+RESET = "\033[0m"
+COLORS = {
+    logging.DEBUG: "\033[32m",
+    logging.INFO: "\033[37m",
+    logging.WARNING: "\033[33m",
+    logging.ERROR: "\033[31m",
+    logging.CRITICAL: "\033[31m",
+}
+
+LOGGER_NAME = "can_fuzzing"
+_LOGGER = logging.getLogger(LOGGER_NAME)
+
+
+class ColorFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        message = super().format(record)
+        stream = getattr(record, "stream", sys.stdout)
+        if not color_enabled(stream):
+            return message
+        color = COLORS.get(record.levelno, COLORS[logging.INFO])
+        return f"{color}{message}{RESET}"
+
+
+class SplitStreamHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFormatter(ColorFormatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            stream = sys.stderr if record.levelno >= logging.ERROR else sys.stdout
+            record.stream = stream
+            stream.write(self.format(record) + "\n")
+            stream.flush()
+        except Exception:
+            self.handleError(record)
+
+
+def enable_windows_ansi() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+    except ImportError:
+        return
+
+    kernel32 = ctypes.windll.kernel32
+    enable_virtual_terminal_processing = 0x0004
+    for handle_id in (-11, -12):
+        handle = kernel32.GetStdHandle(handle_id)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            continue
+        kernel32.SetConsoleMode(handle, mode.value | enable_virtual_terminal_processing)
+
+
+def color_enabled(stream: TextIO) -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    return hasattr(stream, "isatty") and stream.isatty()
+
+
+def configure_logging(level: int = logging.DEBUG) -> logging.Logger:
+    enable_windows_ansi()
+    _LOGGER.handlers.clear()
+    _LOGGER.addHandler(SplitStreamHandler())
+    _LOGGER.setLevel(level)
+    _LOGGER.propagate = False
+    return _LOGGER
+
+
+def set_debug(enabled: bool) -> None:
+    _LOGGER.setLevel(logging.DEBUG if enabled else logging.INFO)
+
+
+def log(message: Any, level: str = "normal", stream: TextIO | None = None, **kwargs: Any) -> None:
+    if stream is not None:
+        kwargs.pop("file", None)
+    kwargs.pop("flush", None)
+    if level == "debug":
+        _LOGGER.debug(str(message))
+    elif level in {"warning", "warn"}:
+        _LOGGER.warning(str(message))
+    elif level == "error":
+        _LOGGER.error(str(message))
+    else:
+        _LOGGER.info(str(message))
+
+
+def info(message: Any, **kwargs: Any) -> None:
+    log(message, "normal", **kwargs)
+
+
+def warning(message: Any, **kwargs: Any) -> None:
+    log(message, "warning", **kwargs)
+
+
+def error(message: Any, **kwargs: Any) -> None:
+    log(message, "error", **kwargs)
+
+
+def debug(message: Any, **kwargs: Any) -> None:
+    log(message, "debug", **kwargs)
 
 
 ACTIVE_RUN_SUMMARY: dict[str, Any] = {}
@@ -13,13 +120,13 @@ ACTIVE_RUN_SUMMARY: dict[str, Any] = {}
 def log_structured(level: str, title: str, values: dict[str, Any]) -> None:
     message = f"{title} {format_structured_block(values)}"
     if level == "error":
-        console.error(message)
+        error(message)
     elif level == "warning":
-        console.warning(message)
+        warning(message)
     elif level == "debug":
-        console.debug(message)
+        debug(message)
     else:
-        console.info(message)
+        info(message)
 
 def start_run_summary(command: str, protocol: str, campaign: str, requested_cases: int | None = None) -> None:
     ACTIVE_RUN_SUMMARY.clear()
@@ -105,7 +212,7 @@ def print_keyboard_interrupt_summary(command: str) -> None:
 
 def log_keepalive_response(message: Any) -> None:
     payload = bytes(getattr(message, "data", b""))
-    console.log(
+    log(
         f"<< [KEEPALIVE] {format_frame_block(getattr(message, 'arbitration_id', None), len(payload), payload, fd=getattr(message, 'is_fd', False))}",
         "rx",
     )
@@ -143,11 +250,11 @@ def log_can_exchange(snapshot: dict[str, Any]) -> None:
     )
     error = str(snapshot.get("error", ""))
     if error:
-        console.error(f"{tx_line} error={error}")
+        error(f"{tx_line} error={error}")
     elif bool(snapshot.get("fault", False)):
-        console.warning(tx_line)
+        warning(tx_line)
     else:
-        console.log(tx_line, "tx")
+        log(tx_line, "tx")
 
     response_count = int(snapshot.get("response_count", 0) or 0)
     response_ids = list(snapshot.get("response_ids", []) or [])
@@ -157,7 +264,7 @@ def log_can_exchange(snapshot: dict[str, Any]) -> None:
     for index in range(max(response_count, len(response_ids), len(response_payloads))):
         rx_id = response_ids[index] if index < len(response_ids) else None
         payload = response_payloads[index] if index < len(response_payloads) else ""
-        console.log(
+        log(
             f"<< {context} {index + 1}/{response_count} {format_frame_block(rx_id, payload_dlc(payload), payload, fd=bool(snapshot.get('fd', False)))}",
             "rx",
         )
@@ -188,11 +295,11 @@ def log_dbc_exchange(snapshot: dict[str, Any]) -> None:
     tx_line += f" -> {format_tx_result(snapshot)}"
     error = str(snapshot.get("error", ""))
     if error:
-        console.error(f"{tx_line} error={error}")
+        error(f"{tx_line} error={error}")
     elif bool(snapshot.get("fault", False)):
-        console.warning(tx_line)
+        warning(tx_line)
     else:
-        console.log(tx_line, "tx")
+        log(tx_line, "tx")
 
     response_messages = list(snapshot.get("response_messages", []) or [])
     if response_messages:
@@ -211,7 +318,7 @@ def log_dbc_exchange(snapshot: dict[str, Any]) -> None:
             line = f"<< {context} {index}/{len(response_messages)} {format_frame_block(rx_id, payload_dlc(payload), payload, fd=bool(snapshot.get('fd', False)))}"
             if pieces:
                 line += " " + " ".join(pieces)
-            console.log(line, "rx")
+            log(line, "rx")
         return
 
     response_count = int(snapshot.get("response_count", 0) or 0)
@@ -222,7 +329,7 @@ def log_dbc_exchange(snapshot: dict[str, Any]) -> None:
     for index in range(max(response_count, len(response_ids), len(response_payloads))):
         rx_id = response_ids[index] if index < len(response_ids) else None
         payload = response_payloads[index] if index < len(response_payloads) else ""
-        console.log(
+        log(
             f"<< {context} {index + 1}/{response_count} {format_frame_block(rx_id, payload_dlc(payload), payload, fd=bool(snapshot.get('fd', False)))}",
             "rx",
         )
@@ -232,7 +339,7 @@ def log_can_rx(snapshot: dict[str, Any]) -> None:
     protocol = "KEEPALIVE" if snapshot.get("phase") == "keepalive" else "SCAN"
     context = format_context(snapshot, protocol)
     fd_text = " fd" if bool(snapshot.get("fd", False)) else ""
-    console.log(
+    log(
         f"<< {context} {format_frame_block(snapshot.get('rx_id'), snapshot.get('rx_dlc', 0), snapshot.get('rx_payload', ''), fd=bool(snapshot.get('fd', False)), suffix=fd_text.strip())}",
         "rx",
     )
@@ -398,10 +505,10 @@ def print_interface_table(configs: list[dict[str, Any]]) -> None:
     for row in rows:
         for index, value in enumerate(row):
             widths[index] = max(widths[index], len(value))
-    console.debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
-    console.debug("  ".join("-" * width for width in widths))
+    debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    debug("  ".join("-" * width for width in widths))
     for row in rows:
-        console.debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+        debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
 
 def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
@@ -426,10 +533,10 @@ def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
         for index, value in enumerate(row):
             widths[index] = max(widths[index], len(value))
     log_structured("debug", "scan_objects", {"count": len(objects)})
-    console.debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
-    console.debug("  ".join("-" * width for width in widths))
+    debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    debug("  ".join("-" * width for width in widths))
     for row in rows:
-        console.debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+        debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
 
 def format_interface_row(config: dict[str, Any]) -> list[str]:
@@ -488,3 +595,10 @@ def status_level(status: str) -> str:
     lowered = status.lower()
     if "error" in lowered or "failed" in lowered or "fail" in lowered:
         return "error"
+
+
+configure_logging()
+
+
+
+

@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import unittest
 
-from can_fuzzing.models import CANFrame, FrameFormat, FrameType
-from can_fuzzing.scanner import expected_response_ids, frame_signature, is_probable_scan_response
+from can_fuzzing.runtime.models import CANFrame, FrameFormat, FrameType
+from can_fuzzing.runtime.scanner import expected_response_ids, frame_signature, is_probable_scan_response
 
 
 class ScannerFilterTests(unittest.TestCase):
@@ -31,3 +31,4 @@ class ScannerFilterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

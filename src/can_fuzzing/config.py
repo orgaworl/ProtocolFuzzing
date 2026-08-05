@@ -7,8 +7,8 @@ from typing import Any
 
 import click
 
-from .common.keepalive import KeepaliveConfig
-from .discovery import DEFAULT_DISCOVERY_INTERFACES
+from .runtime.keepalive import KeepaliveConfig
+from .runtime.discovery import DEFAULT_DISCOVERY_INTERFACES
 
 
 def read_toml_config(path: Path) -> dict[str, Any]:
@@ -19,6 +19,51 @@ def read_toml_config(path: Path) -> dict[str, Any]:
         raise click.ClickException(f"could not read config file {path}: {exc}") from exc
     except tomllib.TOMLDecodeError as exc:
         raise click.ClickException(f"could not parse config file {path}: {exc}") from exc
+
+
+CAN_FD_TIMING_PRESETS: dict[str, dict[str, Any]] = {
+    "sae-j2284": {
+        "bitrate": 500000,
+        "data_bitrate": 2000000,
+        "fd_clock": 80000000,
+        "nominal_sample_point": 87.5,
+        "data_sample_point": 80.0,
+    },
+    "sae-j2284-5": {
+        "bitrate": 500000,
+        "data_bitrate": 5000000,
+        "fd_clock": 80000000,
+        "nominal_sample_point": 87.5,
+        "data_sample_point": 80.0,
+    },
+}
+
+
+def normalize_fd_timing_preset(value: str | None) -> str | None:
+    if value is None:
+        return None
+    token = str(value).strip().lower().replace("_", "-")
+    aliases = {
+        "j2284": "sae-j2284",
+        "sae-j2284-4": "sae-j2284",
+        "500k-2m": "sae-j2284",
+        "500k/2m": "sae-j2284",
+        "j2284-5": "sae-j2284-5",
+        "500k-5m": "sae-j2284-5",
+        "500k/5m": "sae-j2284-5",
+    }
+    token = aliases.get(token, token)
+    return token if token in CAN_FD_TIMING_PRESETS else None
+
+
+def apply_fd_timing_preset(merged: dict[str, Any], cli_keys: set[str]) -> None:
+    preset_name = normalize_fd_timing_preset(merged.get("fd_timing_preset"))
+    if preset_name is None:
+        return
+    merged["fd_timing_preset"] = preset_name
+    for key, value in CAN_FD_TIMING_PRESETS[preset_name].items():
+        if key not in cli_keys:
+            merged[key] = value
 
 
 KEEPALIVE_PRESETS: dict[str, dict[str, Any]] = {
@@ -176,6 +221,10 @@ FUZZ_DEFAULTS: dict[str, Any] = {
     "malformed_rate": 0.15,
     "fd": False,
     "data_bitrate": None,
+    "fd_timing_preset": None,
+    "fd_clock": 80000000,
+    "nominal_sample_point": 87.5,
+    "data_sample_point": 80.0,
     "id_min": 0x000,
     "id_max": 0x7FF,
     "diagnostic_bias": 0.6,
@@ -216,6 +265,10 @@ KEEPALIVE_DEFAULTS: dict[str, Any] = {
     "verbose": False,
     "bitrate": 500000,
     "data_bitrate": None,
+    "fd_timing_preset": None,
+    "fd_clock": 80000000,
+    "nominal_sample_point": 87.5,
+    "data_sample_point": 80.0,
     "fd": False,
     "arbitration_id": 0x7DF,
     "payload": "02 3E 00",
@@ -235,6 +288,7 @@ FDCHECK_DEFAULTS: dict[str, Any] = {
     "verbose": False,
     "bitrate": 500000,
     "data_bitrate": 2000000,
+    "fd_timing_preset": "sae-j2284",
     "fd_clock": 80000000,
     "nominal_sample_point": 87.5,
     "data_sample_point": 80.0,
@@ -262,6 +316,10 @@ SCAN_DEFAULTS: dict[str, Any] = {
     "physical_end": 0x7E7,
     "fd": False,
     "data_bitrate": None,
+    "fd_timing_preset": None,
+    "fd_clock": 80000000,
+    "nominal_sample_point": 87.5,
+    "data_sample_point": 80.0,
     "passive_only": False,
     "active_only": False,
     "no_progress": False,
@@ -279,6 +337,11 @@ def normalize_config_value(key: str, value: Any) -> Any:
         return parse_int(str(value)) if not isinstance(value, int) else value
     if key == "protocol":
         return parse_protocol(str(value))
+    if key == "fd_timing_preset":
+        normalized = normalize_fd_timing_preset(str(value))
+        if normalized is None:
+            raise click.BadParameter("fd_timing_preset must be one of: sae-j2284, sae-j2284-5")
+        return normalized
     return value
 
 
@@ -294,11 +357,13 @@ def build_args(section: str, defaults: dict[str, Any], params: dict[str, Any]) -
             if protocol_section is not None:
                 merged.update(extract_config(raw_config, defaults, protocol_section))
             merged.update(extract_keepalive_config(raw_config, defaults))
-    for key, value in params.items():
-        if value is not None:
-            merged[key] = value
+    cli_keys = {key for key, value in params.items() if value is not None}
+    for key in cli_keys:
+        merged[key] = params[key]
     if section == "fuzz":
         merged["protocol"] = normalize_protocol(merged.get("protocol")) or "can"
+    if "fd_timing_preset" in defaults:
+        apply_fd_timing_preset(merged, cli_keys)
     return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})
 
 
@@ -313,10 +378,11 @@ def build_keepalive_args(params: dict[str, Any]) -> SimpleNamespace:
     merged = dict(KEEPALIVE_DEFAULTS)
     merged.update({"preset": preset_name, "arbitration_id": preset["arbitration_id"], "payload": preset["payload"], "fd": preset["fd"], "format": preset["format"], "listen": preset["listen"], "listen_timeout": preset["listen_timeout"], "check_message": preset["check_message"]})
     merged.update(config_values)
-    for key, value in params.items():
-        if value is not None:
-            merged[key] = value
+    cli_keys = {key for key, value in params.items() if value is not None}
+    for key in cli_keys:
+        merged[key] = params[key]
     merged["preset"] = normalize_keepalive_preset(merged.get("preset")) or preset_name
+    apply_fd_timing_preset(merged, cli_keys)
     return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})
 
 
@@ -343,4 +409,10 @@ def extract_keepalive_config(raw_config: dict[str, Any], defaults: dict[str, Any
         return {}
     mapping = {"enabled": "keepalive", "keepalive": "keepalive", "preset": "keepalive_preset", "arbitration_id": "keepalive_id", "id": "keepalive_id", "payload": "keepalive_payload", "interval_ms": "keepalive_interval_ms", "format": "keepalive_format", "fd": "keepalive_fd", "listen": "keepalive_listen", "listen_timeout": "keepalive_listen_timeout", "check_message": "keepalive_check_message"}
     return {dest: section[key] for key, dest in mapping.items() if key in section and dest in defaults}
+
+
+
+
+
+
 

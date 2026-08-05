@@ -36,11 +36,14 @@ uv run scan --interface pcan --channel PCAN_USBBUS1 --bitrate 500000 --passive-o
 uv run scan --interface pcan --channel PCAN_USBBUS1 --bitrate 500000 --active-only
 ```
 
-Check CAN FD support on the hardware adapter and the target device:
+Check CAN FD support on the hardware adapter and the target device. The project provides CAN FD timing presets for SAE J2284 500K/2M and SAE J2284-5 500K/5M:
 
 ```bash
-uv run fdcheck --interface pcan --channel PCAN_USBBUS1 --bitrate 500000 --data-bitrate 2000000
+uv run fdcheck --interface pcan --channel PCAN_USBBUS1 --fd-timing-preset sae-j2284
+uv run fdcheck --interface pcan --channel PCAN_USBBUS1 --fd-timing-preset sae-j2284-5
 ```
+
+The presets set `bitrate`, `data_bitrate`, `fd_clock`, `nominal_sample_point`, and `data_sample_point`. Explicit command line values still override preset values.
 
 ### Fuzzing with CLI parameters
 
@@ -134,7 +137,9 @@ Important hardware options:
 - `--dbc_file`: DBC file path used when `--protocol dbc` is selected.
 - `--bitrate`: arbitration bitrate. Use `none` if the selected backend does not require it.
 - `--fd`: send CAN FD frames or open CAN FD mode when supported.
+- `--fd-timing-preset`: CAN FD timing preset. Supported values are `sae-j2284` for 500K/2M and `sae-j2284-5` for 500K/5M.
 - `--data-bitrate`: CAN FD data bitrate.
+- `--fd-clock`, `--nominal-sample-point`, and `--data-sample-point`: low-level CAN FD timing inputs used for PCAN `BitTimingFd`.
 - `--id-min` and `--id-max`: limit the fuzzing arbitration ID range.
 - `--receive-timeout`: response collection window after each transmitted fuzzing frame.
 - `--inter-frame-delay-ms`: delay between generated fuzzing frames.
@@ -147,7 +152,7 @@ Important hardware options:
 
 ## DBC Support
 
-DBC fuzzing uses the local implementation under `src/can_fuzzing/fuzzers/dbc/` and is based on the DBC parsing and CAN packing ideas from the reference copy of openDBC in `reference/opendbc`. The reference project separates DBC data, CAN parsing and packing, vehicle logic, and safety logic. This repository uses only the DBC-oriented pieces as a reference and keeps the runtime path local to the fuzzing workflow.
+DBC fuzzing uses the local implementation under `src/can_fuzzing/fuzzing/dbc/` and is based on the DBC parsing and CAN packing ideas from the reference copy of openDBC in `reference/opendbc`. The reference project separates DBC data, CAN parsing and packing, vehicle logic, and safety logic. This repository uses only the DBC-oriented pieces as a reference and keeps the runtime path local to the fuzzing workflow.
 
 Reference files:
 
@@ -155,3 +160,4 @@ Reference files:
 - `reference/opendbc/opendbc/can/dbc.py`
 - `reference/opendbc/opendbc/can/parser.py`
 - `reference/opendbc/opendbc/can/packer.py`
+

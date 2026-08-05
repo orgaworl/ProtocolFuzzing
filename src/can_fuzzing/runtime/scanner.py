@@ -23,6 +23,9 @@ class ScanConfig:
     inter_probe_delay_ms: float = 50.0
     fd: bool = False
     data_bitrate: int | None = None
+    fd_clock: int = 80000000
+    nominal_sample_point: float = 87.5
+    data_sample_point: float = 80.0
     active: bool = True
     passive: bool = True
     physical_start: int = 0x7E0
@@ -65,6 +68,9 @@ def run_scan(config: ScanConfig, progress_callback=None) -> dict[str, Any]:
         receive_timeout=config.active_timeout,
         fd=config.fd,
         data_bitrate=config.data_bitrate,
+        fd_clock=config.fd_clock,
+        nominal_sample_point=config.nominal_sample_point,
+        data_sample_point=config.data_sample_point,
     ) as adapter:
         try:
             adapter.drain_pending()
@@ -315,3 +321,5 @@ def build_summary(
 def report(progress_callback, **snapshot) -> None:
     if progress_callback is not None:
         progress_callback(snapshot)
+
+

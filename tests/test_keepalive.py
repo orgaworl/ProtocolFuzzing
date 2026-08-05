@@ -9,8 +9,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from can_fuzzing import cli_config
-from can_fuzzing.common.keepalive import KeepaliveConfig, KeepaliveSession, KeepaliveWorker
+from can_fuzzing import config as cli_config
+from can_fuzzing.runtime.keepalive import KeepaliveConfig, KeepaliveSession, KeepaliveWorker
 
 
 class DummyMessage:
@@ -108,5 +108,7 @@ class KeepaliveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

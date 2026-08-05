@@ -8,8 +8,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from can_fuzzing.fuzzers.dbc import load_dbc_database
-from can_fuzzing.fuzzers.dbc.strategy import build_request
+from can_fuzzing.fuzzing.dbc import load_dbc_database
+from can_fuzzing.fuzzing.dbc.strategy import build_request
 
 
 class DBCFuzzerTests(unittest.TestCase):
@@ -56,3 +56,4 @@ BO_ 512 TestMessage: 8 Vector__XXX
 
 if __name__ == "__main__":
     unittest.main()
+

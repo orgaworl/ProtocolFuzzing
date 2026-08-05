@@ -159,3 +159,5 @@ class PDFCanvas:
             data.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
         data.extend(f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii"))
         output.write_bytes(data)
+
+
