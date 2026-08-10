@@ -33,6 +33,17 @@ class CliTests(unittest.TestCase):
         self.assertIn("dbc_file", names)
 
 
+
+    def test_bitrate_auto_token_enables_auto_detection(self) -> None:
+        args = cli_config.build_args(
+            "fuzz",
+            cli_config.FUZZ_DEFAULTS,
+            {"bitrate": "auto", "bitrate_candidates": "125000,500000"},
+        )
+        self.assertIsNone(args.bitrate)
+        self.assertTrue(args.auto_bitrate)
+        self.assertEqual(args.bitrate_candidates, "125000,500000")
+
     def test_fd_timing_preset_sets_j2284_5_values(self) -> None:
         args = cli_config.build_args(
             "fdcheck",

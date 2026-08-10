@@ -168,9 +168,13 @@ def parse_int(value: str) -> int:
 
 
 def parse_optional_int(value: str) -> int | None:
-    if value.lower() in {"none", "null", ""}:
+    if value.lower() in {"none", "null", "", "auto"}:
         return None
     return int(value, 0)
+
+
+def is_auto_token(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() == "auto"
 
 
 def parse_int_list(value: str) -> list[int]:
@@ -191,7 +195,7 @@ def parse_interface_names(value: str) -> list[str]:
 
 CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "keepalive_id", "arbitration_id"}
 CLICK_OPTIONAL_INT_KEYS = {"bitrate", "data_bitrate"}
-CLICK_LIST_AS_CSV_KEYS = {"interfaces", "target_ids", "opcodes"}
+CLICK_LIST_AS_CSV_KEYS = {"interfaces", "target_ids", "opcodes", "bitrate_candidates", "data_bitrate_candidates"}
 
 
 FUZZ_DEFAULTS: dict[str, Any] = {
@@ -221,6 +225,10 @@ FUZZ_DEFAULTS: dict[str, Any] = {
     "malformed_rate": 0.15,
     "fd": False,
     "data_bitrate": None,
+    "auto_bitrate": False,
+    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
+    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
+    "bitrate_probe_timeout": 0.2,
     "fd_timing_preset": None,
     "fd_clock": 80000000,
     "nominal_sample_point": 87.5,
@@ -265,6 +273,10 @@ KEEPALIVE_DEFAULTS: dict[str, Any] = {
     "verbose": False,
     "bitrate": 500000,
     "data_bitrate": None,
+    "auto_bitrate": False,
+    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
+    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
+    "bitrate_probe_timeout": 0.2,
     "fd_timing_preset": None,
     "fd_clock": 80000000,
     "nominal_sample_point": 87.5,
@@ -288,6 +300,10 @@ FDCHECK_DEFAULTS: dict[str, Any] = {
     "verbose": False,
     "bitrate": 500000,
     "data_bitrate": 2000000,
+    "auto_bitrate": False,
+    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
+    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
+    "bitrate_probe_timeout": 0.2,
     "fd_timing_preset": "sae-j2284",
     "fd_clock": 80000000,
     "nominal_sample_point": 87.5,
@@ -316,6 +332,10 @@ SCAN_DEFAULTS: dict[str, Any] = {
     "physical_end": 0x7E7,
     "fd": False,
     "data_bitrate": None,
+    "auto_bitrate": False,
+    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
+    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
+    "bitrate_probe_timeout": 0.2,
     "fd_timing_preset": None,
     "fd_clock": 80000000,
     "nominal_sample_point": 87.5,
@@ -364,6 +384,7 @@ def build_args(section: str, defaults: dict[str, Any], params: dict[str, Any]) -
         merged["protocol"] = normalize_protocol(merged.get("protocol")) or "can"
     if "fd_timing_preset" in defaults:
         apply_fd_timing_preset(merged, cli_keys)
+    apply_auto_bitrate_tokens(merged)
     return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})
 
 
@@ -383,7 +404,18 @@ def build_keepalive_args(params: dict[str, Any]) -> SimpleNamespace:
         merged[key] = params[key]
     merged["preset"] = normalize_keepalive_preset(merged.get("preset")) or preset_name
     apply_fd_timing_preset(merged, cli_keys)
+    apply_auto_bitrate_tokens(merged)
     return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})
+
+
+def apply_auto_bitrate_tokens(merged: dict[str, Any]) -> None:
+    if is_auto_token(merged.get("bitrate")):
+        merged["bitrate"] = None
+        merged["auto_bitrate"] = True
+    if is_auto_token(merged.get("data_bitrate")):
+        merged["data_bitrate"] = None
+        merged["auto_bitrate"] = True
+
 
 
 def extract_config(raw_config: dict[str, Any], defaults: dict[str, Any], section: str) -> dict[str, Any]:

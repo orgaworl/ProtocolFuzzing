@@ -45,6 +45,26 @@ uv run fdcheck --interface pcan --channel PCAN_USBBUS1 --fd-timing-preset sae-j2
 
 The presets set `bitrate`, `data_bitrate`, `fd_clock`, `nominal_sample_point`, and `data_sample_point`. Explicit command line values still override preset values.
 
+
+### Automatic bitrate detection
+
+When the CAN bitrate or CAN FD data bitrate is unknown, enable hardware-layer enumeration with `--auto-bitrate` or set a bitrate value to `auto`:
+
+```bash
+uv run scan --interface pcan --channel PCAN_USBBUS1 --bitrate auto
+uv run fuzz --protocol can --interface pcan --channel PCAN_USBBUS1 --bitrate auto
+uv run fdcheck --interface pcan --channel PCAN_USBBUS1 --auto-bitrate --bitrate auto --data-bitrate auto
+```
+
+The adapter tries common arbitration bitrates and, for CAN FD, common data-phase bitrates. It opens each candidate and briefly listens for bus traffic. If traffic is observed, that candidate is selected. If the channel opens but no traffic is observed, the first openable candidate is used as a fallback.
+
+Customize the search space when needed:
+
+```bash
+uv run scan --bitrate auto --bitrate-candidates 500000,250000,125000 --bitrate-probe-timeout 0.5
+uv run fdcheck --auto-bitrate --bitrate auto --data-bitrate auto --data-bitrate-candidates 2000000,5000000
+```
+
 ### Fuzzing with CLI parameters
 
 Run a fuzzing campaign against a real CAN interface:
@@ -135,7 +155,9 @@ Important hardware options:
 - `--interface`: python-can backend, such as `socketcan`, `pcan`, `vector`, or `slcan`.
 - `--channel`: backend-specific channel name.
 - `--dbc_file`: DBC file path used when `--protocol dbc` is selected.
-- `--bitrate`: arbitration bitrate. Use `none` if the selected backend does not require it.
+- `--bitrate`: arbitration bitrate. Use `none` if the selected backend does not require it, or `auto` to enable hardware-layer bitrate detection.
+- `--auto-bitrate`: enumerate candidate CAN/CAN FD bitrates when bitrate values are unknown.
+- `--bitrate-candidates`, `--data-bitrate-candidates`, and `--bitrate-probe-timeout`: control automatic bitrate detection.
 - `--fd`: send CAN FD frames or open CAN FD mode when supported.
 - `--fd-timing-preset`: CAN FD timing preset. Supported values are `sae-j2284` for 500K/2M and `sae-j2284-5` for 500K/5M.
 - `--data-bitrate`: CAN FD data bitrate.

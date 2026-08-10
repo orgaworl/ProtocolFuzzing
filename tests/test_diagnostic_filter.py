@@ -41,7 +41,15 @@ class DummyBus:
         return None
 
 
-def install_fake_can_module() -> None:
+
+class ProbeBus(DummyBus):
+    def recv(self, timeout: float):
+        if self.responses_after_send:
+            return self.responses_after_send.pop(0)
+        return None
+
+
+def install_fake_can_module(bus_factory=None) -> None:
     module = ModuleType('can')
 
     class FakeCanError(Exception):
@@ -60,13 +68,41 @@ def install_fake_can_module() -> None:
     module.CanError = FakeCanError
     module.Message = FakeMessage
     module.interface = ModuleType('can.interface')
-    module.interface.Bus = lambda **kwargs: None
+    module.interface.Bus = bus_factory or (lambda **kwargs: None)
     sys.modules['can'] = module
 
 
 class AdapterEchoTests(unittest.TestCase):
     def setUp(self) -> None:
         install_fake_can_module()
+
+
+    def test_auto_bitrate_selects_candidate_with_observed_traffic(self) -> None:
+        opened: list[dict] = []
+
+        def bus_factory(**kwargs):
+            opened.append(kwargs)
+            bitrate = kwargs.get('bitrate')
+            responses = []
+            if bitrate == 500000:
+                responses = [DummyMessage(0x123, b'\x01\x02')]
+            return ProbeBus(responses)
+
+        install_fake_can_module(bus_factory)
+        adapter = CANHardwareAdapter(
+            'pcan',
+            'PCAN_USBBUS1',
+            bitrate=None,
+            auto_bitrate=True,
+            bitrate_candidates=(125000, 500000),
+            bitrate_probe_timeout=0.001,
+        )
+
+        with adapter:
+            self.assertEqual(adapter.detected_bitrate, 500000)
+            self.assertEqual(adapter.auto_bitrate_status, 'detected_from_bus_traffic')
+
+        self.assertEqual([item.get('bitrate') for item in opened], [125000, 500000])
 
     def test_transact_drops_echo_message(self) -> None:
         adapter = CANHardwareAdapter('pcan', 'PCAN_USBBUS1', receive_timeout=0.001, drop_echo=True)

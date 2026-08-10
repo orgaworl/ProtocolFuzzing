@@ -30,6 +30,9 @@ class OBDFuzzConfig:
     interface: str = "socketcan"
     channel: str = "can0"
     bitrate: int | None = 500000
+    auto_bitrate: bool = False
+    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
+    bitrate_probe_timeout: float = 0.2
     receive_timeout: float = 0.15
     inter_request_delay_ms: float = 20.0
     request_mode: str = "functional"
@@ -97,6 +100,9 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: Callable[[dict], N
         receive_timeout=config.receive_timeout,
         fd=False,
         data_bitrate=None,
+        auto_bitrate=config.auto_bitrate,
+        bitrate_candidates=config.bitrate_candidates,
+        bitrate_probe_timeout=config.bitrate_probe_timeout,
     ) as adapter, KeepaliveSession(
         adapter,
         config.keepalive,

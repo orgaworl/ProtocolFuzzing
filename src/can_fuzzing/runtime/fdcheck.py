@@ -18,6 +18,10 @@ class FDCheckConfig:
     channel: str
     bitrate: int | None = 500000
     data_bitrate: int | None = 2000000
+    auto_bitrate: bool = False
+    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
+    data_bitrate_candidates: tuple[int, ...] = (2000000, 5000000, 4000000, 1000000)
+    bitrate_probe_timeout: float = 0.2
     fd_timing_preset: str | None = "sae-j2284"
     fd_clock: int = 80000000
     nominal_sample_point: float = 87.5
@@ -93,6 +97,10 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
             receive_timeout=config.probe_timeout,
             fd=True,
             data_bitrate=adapter_data_bitrate,
+            auto_bitrate=config.auto_bitrate,
+            bitrate_candidates=config.bitrate_candidates,
+            data_bitrate_candidates=config.data_bitrate_candidates,
+            bitrate_probe_timeout=config.bitrate_probe_timeout,
             fd_clock=config.fd_clock,
             nominal_sample_point=config.nominal_sample_point,
             data_sample_point=config.data_sample_point,
@@ -160,6 +168,9 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
         "channel": config.channel,
         "bitrate": config.bitrate,
         "data_bitrate": config.data_bitrate,
+        "auto_bitrate": config.auto_bitrate,
+        "bitrate_candidates": list(config.bitrate_candidates),
+        "data_bitrate_candidates": list(config.data_bitrate_candidates),
         "fd_timing_preset": config.fd_timing_preset,
         "fd_clock": config.fd_clock,
         "nominal_sample_point": config.nominal_sample_point,

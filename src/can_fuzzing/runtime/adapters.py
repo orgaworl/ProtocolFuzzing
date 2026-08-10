@@ -6,10 +6,14 @@ import logging
 import time
 import threading
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Any
 
 from .discovery import list_can_interfaces
 from .models import CANFrame, FrameType
+
+DEFAULT_CAN_BITRATE_CANDIDATES = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
+DEFAULT_CAN_FD_DATA_BITRATE_CANDIDATES = (2000000, 5000000, 4000000, 1000000)
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,10 @@ class CANHardwareAdapter:
         fd_clock: int = 80000000,
         nominal_sample_point: float = 87.5,
         data_sample_point: float = 80.0,
+        auto_bitrate: bool = False,
+        bitrate_candidates: Iterable[int] | None = None,
+        data_bitrate_candidates: Iterable[int] | None = None,
+        bitrate_probe_timeout: float = 0.2,
         timing: Any | None = None,
         check_message: bool = True,
         drop_echo: bool = True,
@@ -64,6 +72,13 @@ class CANHardwareAdapter:
         self.fd_clock = fd_clock
         self.nominal_sample_point = nominal_sample_point
         self.data_sample_point = data_sample_point
+        self.auto_bitrate = auto_bitrate
+        self.bitrate_candidates = tuple(bitrate_candidates or DEFAULT_CAN_BITRATE_CANDIDATES)
+        self.data_bitrate_candidates = tuple(data_bitrate_candidates or DEFAULT_CAN_FD_DATA_BITRATE_CANDIDATES)
+        self.bitrate_probe_timeout = bitrate_probe_timeout
+        self.detected_bitrate: int | None = None
+        self.detected_data_bitrate: int | None = None
+        self.auto_bitrate_status = "disabled"
         self.timing = timing
         self.check_message = check_message
         self.drop_echo = drop_echo
@@ -84,31 +99,13 @@ class CANHardwareAdapter:
         finally:
             logging.disable(previous_disable_level)
 
-        kwargs: dict[str, Any] = {
-            "interface": self.interface,
-            "channel": self.channel,
-        }
-        if self.bitrate is not None:
-            kwargs["bitrate"] = self.bitrate
-        timing = self.timing
-        if self.fd and timing is None and self.interface == "pcan" and self.bitrate is not None and self.data_bitrate is not None:
-            timing = build_fd_timing(
-                fd_clock=self.fd_clock,
-                bitrate=self.bitrate,
-                data_bitrate=self.data_bitrate,
-                nominal_sample_point=self.nominal_sample_point,
-                data_sample_point=self.data_sample_point,
-            )
-        if self.fd:
-            kwargs["fd"] = True
-        if timing is not None:
-            kwargs["timing"] = timing
-        if self.data_bitrate is not None and timing is None:
-            kwargs["data_bitrate"] = self.data_bitrate
-        kwargs["receive_own_messages"] = False
-
         try:
-            self._bus = quiet_call(can.interface.Bus, **kwargs)
+            if self._should_auto_detect_bitrate():
+                self._bus = self._open_with_auto_bitrate(can)
+            else:
+                self._bus = quiet_call(can.interface.Bus, **self._build_bus_kwargs(self.bitrate, self.data_bitrate, self.timing))
+                self.detected_bitrate = self.bitrate
+                self.detected_data_bitrate = self.data_bitrate
         except KeyError as exc:
             raise CANConnectionError(build_unknown_channel_message(self.interface, self.channel)) from exc
         except can.CanError as exc:
@@ -118,6 +115,86 @@ class CANHardwareAdapter:
         finally:
             logging.disable(previous_disable_level)
         return self
+
+
+    def _should_auto_detect_bitrate(self) -> bool:
+        if not self.auto_bitrate:
+            return False
+        if self.timing is not None:
+            return False
+        return self.bitrate is None or (self.fd and self.data_bitrate is None)
+
+    def _build_bus_kwargs(self, bitrate: int | None, data_bitrate: int | None, timing: Any | None = None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "interface": self.interface,
+            "channel": self.channel,
+        }
+        if bitrate is not None:
+            kwargs["bitrate"] = bitrate
+        resolved_timing = timing
+        if self.fd and resolved_timing is None and self.interface == "pcan" and bitrate is not None and data_bitrate is not None:
+            resolved_timing = build_fd_timing(
+                fd_clock=self.fd_clock,
+                bitrate=bitrate,
+                data_bitrate=data_bitrate,
+                nominal_sample_point=self.nominal_sample_point,
+                data_sample_point=self.data_sample_point,
+            )
+        if self.fd:
+            kwargs["fd"] = True
+        if resolved_timing is not None:
+            kwargs["timing"] = resolved_timing
+        if data_bitrate is not None and resolved_timing is None:
+            kwargs["data_bitrate"] = data_bitrate
+        kwargs["receive_own_messages"] = False
+        return kwargs
+
+    def _open_with_auto_bitrate(self, can_module: Any):
+        candidates = self._bitrate_candidate_pairs()
+        errors: list[str] = []
+        fallback: tuple[Any, int | None, int | None] | None = None
+        for bitrate, data_bitrate in candidates:
+            try:
+                kwargs = self._build_bus_kwargs(bitrate, data_bitrate, None)
+                bus = quiet_call(can_module.interface.Bus, **kwargs)
+            except (CANConnectionError, KeyError, OSError, can_module.CanError, ValueError) as exc:
+                errors.append(f"bitrate={bitrate} data_bitrate={data_bitrate}: {exc}")
+                continue
+            try:
+                message = quiet_call(bus.recv, timeout=self.bitrate_probe_timeout)
+            except can_module.CanError as exc:
+                errors.append(f"bitrate={bitrate} data_bitrate={data_bitrate}: receive failed: {exc}")
+                quiet_shutdown(bus)
+                continue
+            if message is not None:
+                self.bitrate = bitrate
+                self.data_bitrate = data_bitrate
+                self.detected_bitrate = bitrate
+                self.detected_data_bitrate = data_bitrate
+                self.auto_bitrate_status = "detected_from_bus_traffic"
+                return bus
+            if fallback is None:
+                fallback = (bus, bitrate, data_bitrate)
+            else:
+                quiet_shutdown(bus)
+
+        if fallback is not None:
+            bus, bitrate, data_bitrate = fallback
+            self.bitrate = bitrate
+            self.data_bitrate = data_bitrate
+            self.detected_bitrate = bitrate
+            self.detected_data_bitrate = data_bitrate
+            self.auto_bitrate_status = "fallback_no_bus_traffic"
+            return bus
+        detail = "; ".join(errors[-5:]) if errors else "no candidates were tested"
+        raise CANConnectionError(f"Could not auto-detect CAN hardware bitrate for interface {self.interface!r} channel {self.channel!r}. {detail}")
+
+    def _bitrate_candidate_pairs(self) -> list[tuple[int | None, int | None]]:
+        bitrates = (self.bitrate,) if self.bitrate is not None else self.bitrate_candidates
+        if not self.fd:
+            return [(bitrate, None) for bitrate in bitrates]
+        data_bitrates = (self.data_bitrate,) if self.data_bitrate is not None else self.data_bitrate_candidates
+        return [(bitrate, data_bitrate) for bitrate in bitrates for data_bitrate in data_bitrates]
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self._bus is not None:
@@ -261,6 +338,14 @@ class CANHardwareAdapter:
             is_fd=self.fd if is_fd is None else is_fd,
             check=self.check_message if check_message is None else check_message,
         )
+
+
+
+def quiet_shutdown(bus: Any) -> None:
+    try:
+        quiet_call(bus.shutdown)
+    except Exception:
+        return
 
 
 

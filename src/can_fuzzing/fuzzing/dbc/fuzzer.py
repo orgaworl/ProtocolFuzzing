@@ -31,6 +31,10 @@ class DBCFuzzConfig:
     inter_frame_delay_ms: float = 5.0
     fd: bool = False
     data_bitrate: int | None = None
+    auto_bitrate: bool = False
+    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
+    data_bitrate_candidates: tuple[int, ...] = (2000000, 5000000, 4000000, 1000000)
+    bitrate_probe_timeout: float = 0.2
     fd_clock: int = 80000000
     nominal_sample_point: float = 87.5
     data_sample_point: float = 80.0
@@ -88,6 +92,10 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: Callable[[dict], N
         receive_timeout=config.receive_timeout,
         fd=use_fd,
         data_bitrate=config.data_bitrate,
+        auto_bitrate=config.auto_bitrate,
+        bitrate_candidates=config.bitrate_candidates,
+        data_bitrate_candidates=config.data_bitrate_candidates,
+        bitrate_probe_timeout=config.bitrate_probe_timeout,
         fd_clock=config.fd_clock,
         nominal_sample_point=config.nominal_sample_point,
         data_sample_point=config.data_sample_point,
