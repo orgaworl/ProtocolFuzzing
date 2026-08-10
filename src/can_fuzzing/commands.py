@@ -23,7 +23,6 @@ from .fuzzing.dbc import DBCFuzzConfig, run_dbc_fuzzing
 from .fuzzing.obd import OBDFuzzConfig, run_obd_fuzzing
 from .fuzzing.private_control import PrivateFuzzConfig, run_private_fuzzing
 from .fuzzing.uds import UDSFuzzConfig, run_uds_fuzzing
-from .runtime.plotting import plot_results
 from .runtime.scanner import ScanConfig, run_scan
 from .log import (
     format_bool,
@@ -209,16 +208,9 @@ def run_keepalive_from_args(args: SimpleNamespace) -> None:
         if stats.errors:
             log_structured("warning", "keepalive_last_error", {"message": stats.last_error})
 
-def run_plot_from_args(args: SimpleNamespace) -> None:
-    outputs = plot_results(Path(args.input), Path(args.output_dir))
-    for output in outputs:
-        log_structured("info", "wrote", {"path": output})
-
-
 def run_clean_from_args(args: SimpleNamespace) -> None:
     clean_directory(Path(args.result_dir))
-    clean_directory(Path(args.plot_dir))
-    log_structured("info", "cleaned", {"result_dir": args.result_dir, "plot_dir": args.plot_dir})
+    log_structured("info", "cleaned", {"result_dir": args.result_dir})
 
 
 def run_list_from_args(args: SimpleNamespace) -> None:

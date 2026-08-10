@@ -260,8 +260,7 @@ FUZZ_DEFAULTS: dict[str, Any] = {
     "keepalive_check_message": None,
 }
 LIST_DEFAULTS: dict[str, Any] = {"config": None, "interfaces": ",".join(DEFAULT_DISCOVERY_INTERFACES), "include_virtual": False, "json": False, "verbose": False}
-PLOT_DEFAULTS: dict[str, Any] = {"config": None, "input": "result/can_baseline_cases.csv", "output_dir": "plot"}
-CLEAN_DEFAULTS: dict[str, Any] = {"config": None, "result_dir": "result", "plot_dir": "plot"}
+CLEAN_DEFAULTS: dict[str, Any] = {"config": None, "result_dir": "result"}
 KEEPALIVE_DEFAULTS: dict[str, Any] = {
     "config": None,
     "preset": "tester-present",
@@ -420,7 +419,7 @@ def apply_auto_bitrate_tokens(merged: dict[str, Any]) -> None:
 
 def extract_config(raw_config: dict[str, Any], defaults: dict[str, Any], section: str) -> dict[str, Any]:
     merged: dict[str, Any] = {}
-    if section in {"fuzz", "plot", "clean", "list", "keepalive", "fdcheck", "scan"}:
+    if section in {"fuzz", "clean", "list", "keepalive", "fdcheck", "scan"}:
         for key, value in raw_config.items():
             if not isinstance(value, dict):
                 normalized_key = key.replace("-", "_")

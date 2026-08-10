@@ -14,7 +14,6 @@ from .config import (
     KEEPALIVE_PRESETS,
     CAN_FD_TIMING_PRESETS,
     LIST_DEFAULTS,
-    PLOT_DEFAULTS,
     SCAN_DEFAULTS,
     build_args,
     build_keepalive_args,
@@ -25,7 +24,6 @@ from .commands import (
     run_fuzz_from_args,
     run_keepalive_from_args,
     run_list_from_args,
-    run_plot_from_args,
     run_scan_from_args,
 )
 from .log import configure_logging, print_keyboard_interrupt_summary
@@ -144,14 +142,8 @@ def _fuzz_click(ctx: click.Context, **params: Any) -> None:
     run_fuzz_from_args(build_args("fuzz", FUZZ_DEFAULTS, params))
 
 
-@click.command(context_settings=CLICK_CONTEXT, help="Generate PDF plots from CAN fuzzing result files.")
-@command_options([COMMON_CONFIG_OPTION, (("--input",), {"default": None, "help": "input CSV result file"}), (("--output-dir",), {"default": None, "help": "directory for generated PDF figures"})])
-def _plot_click(**params: Any) -> None:
-    run_plot_from_args(build_args("plot", PLOT_DEFAULTS, params))
-
-
-@click.command(context_settings=CLICK_CONTEXT, help="Remove generated files from result and plot directories.")
-@command_options([COMMON_CONFIG_OPTION, (("--result-dir",), {"default": None, "help": "result directory to clean"}), (("--plot-dir",), {"default": None, "help": "plot directory to clean"})])
+@click.command(context_settings=CLICK_CONTEXT, help="Remove generated files from result directory.")
+@command_options([COMMON_CONFIG_OPTION, (("--result-dir",), {"default": None, "help": "result directory to clean"})])
 def _clean_click(**params: Any) -> None:
     run_clean_from_args(build_args("clean", CLEAN_DEFAULTS, params))
 
@@ -260,10 +252,6 @@ def _scan_click(**params: Any) -> None:
 
 def fuzz_main() -> None:
     invoke_click(_fuzz_click, "fuzz")
-
-
-def plot_main() -> None:
-    invoke_click(_plot_click, "plot")
 
 
 def clean_main() -> None:
