@@ -1,0 +1,101 @@
+﻿from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+
+from .common import random_bytes
+from .dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
+from .isotp import decode_isotp_payload, encode_isotp_single_frame
+
+
+@dataclass(frozen=True)
+class OBDRequest:
+    request_id: int
+    request_mode: str
+    obd_mode: int
+    mode_name: str
+    pid: int | None
+    application_payload: bytes
+    is_malformed: bool
+
+
+def build_request(rng: random.Random, config) -> OBDRequest:
+    request_mode = choose_request_mode(rng, config)
+    request_id = choose_request_id(rng, request_mode, config)
+    malformed = rng.random() < config.malformed_rate
+    obd_mode = choose_mode(rng)
+    pid = choose_pid(rng, config) if mode_uses_pid(obd_mode) else None
+
+    if malformed:
+        payload_length = rng.randint(1, 7)
+        payload = bytes([obd_mode, *random_bytes(rng, payload_length - 1)])
+    else:
+        payload = build_obd_payload(obd_mode, pid)
+
+    return OBDRequest(
+        request_id=request_id,
+        request_mode=request_mode,
+        obd_mode=obd_mode,
+        mode_name=OBD_MODE_NAMES.get(obd_mode, f"mode_0x{obd_mode:02x}"),
+        pid=pid,
+        application_payload=payload,
+        is_malformed=malformed,
+    )
+
+
+def choose_request_mode(rng: random.Random, config) -> str:
+    if config.request_mode in {"functional", "physical"}:
+        return config.request_mode
+    return rng.choices(["functional", "physical"], weights=[0.8, 0.2], k=1)[0]
+
+
+def choose_request_id(rng: random.Random, request_mode: str, config) -> int:
+    if request_mode == "functional":
+        return config.functional_id
+    return rng.randint(config.physical_start, config.physical_end)
+
+
+def choose_mode(rng: random.Random) -> int:
+    if rng.random() < 0.9:
+        return rng.choice(OBD_MODE_POOL)
+    return rng.randrange(0x01, 0x10)
+
+
+def choose_pid(rng: random.Random, config) -> int:
+    if rng.random() < config.pid_bias:
+        return rng.choice(COMMON_OBD_PIDS)
+    return rng.randrange(0x00, 0x100)
+
+
+def mode_uses_pid(obd_mode: int) -> bool:
+    return obd_mode in {0x01, 0x02, 0x05, 0x06, 0x08, 0x09}
+
+
+def build_obd_payload(obd_mode: int, pid: int | None) -> bytes:
+    if mode_uses_pid(obd_mode):
+        return bytes([obd_mode, 0x00 if pid is None else pid])
+    return bytes([obd_mode])
+
+
+def summarize_responses(response_payloads: list[str], request_mode: int) -> dict[str, int | str]:
+    positive = 0
+    negative = 0
+    kind = "no_response"
+    expected_positive = (request_mode + 0x40) & 0xFF
+    for raw_hex in response_payloads:
+        raw = bytes.fromhex(raw_hex)
+        frame_kind, app_payload = decode_isotp_payload(raw)
+        if frame_kind != "single_frame" or not app_payload:
+            kind = frame_kind
+            continue
+        service = app_payload[0]
+        if service == expected_positive:
+            positive += 1
+            kind = "positive_response"
+        elif service == 0x7F:
+            negative += 1
+            kind = "negative_response"
+        else:
+            kind = f"service_0x{service:02x}"
+    return {"positive": positive, "negative": negative, "kind": kind}
+

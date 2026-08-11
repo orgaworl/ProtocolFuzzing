@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import tomllib
 from pathlib import Path
@@ -440,6 +440,7 @@ def extract_keepalive_config(raw_config: dict[str, Any], defaults: dict[str, Any
         return {}
     mapping = {"enabled": "keepalive", "keepalive": "keepalive", "preset": "keepalive_preset", "arbitration_id": "keepalive_id", "id": "keepalive_id", "payload": "keepalive_payload", "interval_ms": "keepalive_interval_ms", "format": "keepalive_format", "fd": "keepalive_fd", "listen": "keepalive_listen", "listen_timeout": "keepalive_listen_timeout", "check_message": "keepalive_check_message"}
     return {dest: section[key] for key, dest in mapping.items() if key in section and dest in defaults}
+
 
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import contextlib
 import io
@@ -56,6 +56,7 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
         else:
             normalized[key] = str(value)
     return normalized
+
 
 
 

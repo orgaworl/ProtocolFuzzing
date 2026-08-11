@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -362,5 +362,6 @@ def parse_hex_id_list(value: str) -> list[int]:
 
 def split_payload_list(value: str) -> list[str]:
     return [item for item in value.split(";") if item]
+
 
 

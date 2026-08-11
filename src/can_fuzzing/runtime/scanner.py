@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -329,5 +329,6 @@ def build_summary(
 def report(progress_callback, **snapshot) -> None:
     if progress_callback is not None:
         progress_callback(snapshot)
+
 
 

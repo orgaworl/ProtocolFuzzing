@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import contextlib
 import io
@@ -436,6 +436,7 @@ def channel_status_hint(interface: str, channel: str) -> list[str]:
             return ["The PCAN channel is occupied by PCAN-View or another PCAN client."]
         return [f"The PCAN channel reported condition {condition}."]
     return ["For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel."]
+
 
 
 

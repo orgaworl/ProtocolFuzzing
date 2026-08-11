@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -8,17 +8,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..protocol.isotp import encode_isotp_single_frame
+from ..protocol.obd import build_request, summarize_responses
 from ..runtime.adapters import CANHardwareAdapter
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
-from .utils import (
-    decode_isotp_payload,
-    encode_isotp_single_frame,
-    random_bytes,
-    report_progress,
-    should_report_progress,
-)
-from .protocol_dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
 from ..runtime.models import CANFrame, FrameFormat, FrameType
+from .utils import report_progress, should_report_progress
 
 
 @dataclass(frozen=True)
@@ -61,17 +56,6 @@ class OBDFuzzResult:
     unique_pids: int
     csv_path: Path
     summary_path: Path
-
-
-@dataclass(frozen=True)
-class OBDRequest:
-    request_id: int
-    request_mode: str
-    obd_mode: int
-    mode_name: str
-    pid: int | None
-    application_payload: bytes
-    is_malformed: bool
 
 
 def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> OBDFuzzResult:
@@ -260,88 +244,7 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: Callable[[dict], N
     )
 
 
-def build_request(rng: random.Random, config: OBDFuzzConfig) -> OBDRequest:
-    request_mode = choose_request_mode(rng, config)
-    request_id = choose_request_id(rng, request_mode, config)
-    malformed = rng.random() < config.malformed_rate
-    obd_mode = choose_mode(rng)
-    pid = choose_pid(rng, config) if mode_uses_pid(obd_mode) else None
-
-    if malformed:
-        payload_length = rng.randint(1, 7)
-        payload = bytes([obd_mode, *random_bytes(rng, payload_length - 1)])
-    else:
-        payload = build_obd_payload(obd_mode, pid)
-
-    return OBDRequest(
-        request_id=request_id,
-        request_mode=request_mode,
-        obd_mode=obd_mode,
-        mode_name=OBD_MODE_NAMES.get(obd_mode, f"mode_0x{obd_mode:02x}"),
-        pid=pid,
-        application_payload=payload,
-        is_malformed=malformed,
-    )
-
-
-def choose_request_mode(rng: random.Random, config: OBDFuzzConfig) -> str:
-    if config.request_mode in {"functional", "physical"}:
-        return config.request_mode
-    return rng.choices(["functional", "physical"], weights=[0.8, 0.2], k=1)[0]
-
-
-def choose_request_id(rng: random.Random, request_mode: str, config: OBDFuzzConfig) -> int:
-    if request_mode == "functional":
-        return config.functional_id
-    return rng.randint(config.physical_start, config.physical_end)
-
-
-def choose_mode(rng: random.Random) -> int:
-    if rng.random() < 0.9:
-        return rng.choice(OBD_MODE_POOL)
-    return rng.randrange(0x01, 0x10)
-
-
-def choose_pid(rng: random.Random, config: OBDFuzzConfig) -> int:
-    if rng.random() < config.pid_bias:
-        return rng.choice(COMMON_OBD_PIDS)
-    return rng.randrange(0x00, 0x100)
-
-
-def mode_uses_pid(obd_mode: int) -> bool:
-    return obd_mode in {0x01, 0x02, 0x05, 0x06, 0x08, 0x09}
-
-
-def build_obd_payload(obd_mode: int, pid: int | None) -> bytes:
-    if mode_uses_pid(obd_mode):
-        return bytes([obd_mode, 0x00 if pid is None else pid])
-    return bytes([obd_mode])
-
-
-def summarize_responses(response_payloads: list[str], request_mode: int) -> dict[str, int | str]:
-    positive = 0
-    negative = 0
-    kind = "no_response"
-    expected_positive = (request_mode + 0x40) & 0xFF
-    for raw_hex in response_payloads:
-        raw = bytes.fromhex(raw_hex)
-        frame_kind, app_payload = decode_isotp_payload(raw)
-        if frame_kind != "single_frame" or not app_payload:
-            kind = frame_kind
-            continue
-        service = app_payload[0]
-        if service == expected_positive:
-            positive += 1
-            kind = "positive_response"
-        elif service == 0x7F:
-            negative += 1
-            kind = "negative_response"
-        else:
-            kind = f"service_0x{service:02x}"
-    return {"positive": positive, "negative": negative, "kind": kind}
-
-
-def build_coverage_points(request: OBDRequest, response_summary: dict[str, int | str], response_ids: list[int]) -> set[str]:
+def build_coverage_points(request, response_summary: dict[str, int | str], response_ids: list[int]) -> set[str]:
     points = {
         f"tx_request_id_{request.request_id:x}",
         f"tx_mode_{request.obd_mode:02x}",
@@ -429,5 +332,4 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
 

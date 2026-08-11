@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -7,32 +7,22 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ..runtime.adapters import CANHardwareAdapter
+from ..log import warning
 from .utils import report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
-from .protocol_dictionary import COMMON_CAN_IDS, COMMON_CLASSIC_LENGTHS, COMMON_DIAGNOSTIC_TEMPLATES, COMMON_DIAGNOSTIC_TEMPLATES_FD, COMMON_FD_LENGTHS
 from ..runtime.models import CANFrame, FrameFormat, FrameType
-
-DIAGNOSTIC_IDS = COMMON_CAN_IDS
-
-
-class CANFuzzingStrategyConfig:
-    inter_frame_delay_ms: float
-    fd: bool
-    id_min: int
-    id_max: int
-    diagnostic_bias: float
-    extended_probability: float
-    include_remote: bool
-    include_error: bool
+from ..protocol.dbc import DBCDatabase, DBCMessage, DBCSignal, coerce_number, load_dbc_database
 
 
 @dataclass(frozen=True)
-class FuzzConfig:
+class DBCFuzzConfig:
+    dbc_file: Path
     cases: int = 1000
     seed: int = 1337
-    campaign: str = "can_baseline"
+    campaign: str = "dbc_baseline"
     output_dir: Path = Path("result")
     interface: str = "socketcan"
     channel: str = "can0"
@@ -48,19 +38,13 @@ class FuzzConfig:
     fd_clock: int = 80000000
     nominal_sample_point: float = 87.5
     data_sample_point: float = 80.0
-    id_min: int = 0x000
-    id_max: int = 0x7FF
-    diagnostic_bias: float = 0.6
-    extended_probability: float = 0.0
-    include_remote: bool = False
-    include_error: bool = False
     progress_interval: int = 100
     progress_seconds: float = 1.0
     keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
 
 
 @dataclass(frozen=True)
-class FuzzResult:
+class DBCFuzzResult:
     campaign: str
     cases: int
     completed_cases: int
@@ -68,34 +52,45 @@ class FuzzResult:
     sent: int
     faults: int
     responses: int
-    unique_reasons: int
+    decoded_responses: int
+    unique_messages: int
+    unique_signals: int
     coverage_points: int
     csv_path: Path
     summary_path: Path
 
 
-def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> FuzzResult:
+def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> DBCFuzzResult:
     rng = random.Random(config.seed)
+    database = load_dbc_database(config.dbc_file)
+    if not database.messages:
+        raise ValueError(f"DBC file {config.dbc_file} does not define any BO_ messages")
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = config.output_dir / f"{config.campaign}_cases.csv"
     summary_path = config.output_dir / f"{config.campaign}_summary.json"
 
+    use_fd = config.fd or database.requires_fd
     sent = 0
     faults = 0
     responses = 0
+    decoded_responses = 0
     completed_cases = 0
     interrupted = False
-    reasons: set[str] = set()
+    messages_seen: set[str] = set()
+    signals_seen: set[str] = set()
     coverage: set[str] = set()
     last_progress = time.monotonic()
+
+    if database.requires_fd and not config.fd:
+        warning("DBC file contains frames larger than 8 bytes; enabling CAN FD automatically")
 
     with CANHardwareAdapter(
         interface=config.interface,
         channel=config.channel,
         bitrate=config.bitrate,
         receive_timeout=config.receive_timeout,
-        fd=config.fd,
+        fd=use_fd,
         data_bitrate=config.data_bitrate,
         auto_bitrate=config.auto_bitrate,
         bitrate_candidates=config.bitrate_candidates,
@@ -115,21 +110,44 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         fh.flush()
 
         try:
-            current_timestamp_ms = 0
             for case_id in range(config.cases):
-                frame = generate_frame(rng, case_id, current_timestamp_ms, config)
-                current_timestamp_ms = frame.timestamp_ms
+                request = build_request(rng, database)
+                frame = CANFrame.from_ints(
+                    request.message_id,
+                    request.payload,
+                    FrameFormat.EXTENDED if request.message_id > 0x7FF else FrameFormat.STANDARD,
+                    FrameType.DATA,
+                )
                 observation = adapter.transact(frame)
 
                 sent += int(observation.sent)
                 faults += int(observation.fault)
                 responses += observation.response_count
-                reasons.add(observation.reason)
-                coverage.update(classify_coverage(frame, observation))
+                messages_seen.add(request.message_name)
+                signals_seen.update(request.signal_values)
+
+                decoded_response_rows: list[dict[str, object]] = []
+                for response_id, payload_hex in zip(observation.response_ids, observation.response_payloads):
+                    message, decoded = database.decode_frame(response_id, bytes.fromhex(payload_hex))
+                    if message is not None:
+                        decoded_responses += 1
+                        coverage.add(f"rx_message_{message.name}")
+                        for signal_name in decoded:
+                            coverage.add(f"rx_signal_{signal_name}")
+                    decoded_response_rows.append(
+                        {
+                            "id": response_id,
+                            "payload": payload_hex,
+                            "message_name": message.name if message is not None else "",
+                            "signals": decoded,
+                        }
+                    )
+
+                coverage.update(build_coverage_points(request, observation, decoded_response_rows))
                 report_progress(
                     progress_callback,
                     event="can_exchange",
-                    protocol="can",
+                    protocol="dbc",
                     case_id=case_id,
                     total_cases=config.cases,
                     tx_id=frame.identifier,
@@ -137,7 +155,10 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                     tx_dlc=frame.dlc,
                     tx_format=frame.frame_format.value,
                     tx_type=frame.frame_type.value,
-                    fd=config.fd,
+                    fd=use_fd,
+                    message_name=request.message_name,
+                    tx_signal_values=request.signal_values,
+                    strategy=request.strategy,
                     sent=observation.sent,
                     fault=observation.fault,
                     state=observation.state,
@@ -145,6 +166,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                     response_count=observation.response_count,
                     response_ids=observation.response_ids,
                     response_payloads=observation.response_payloads,
+                    response_messages=decoded_response_rows,
                     latency_ms=observation.latency_ms,
                     error=observation.error,
                 )
@@ -153,19 +175,21 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                     {
                         "case_id": case_id,
                         "timestamp_ms": frame.timestamp_ms,
-                        "identifier": frame.identifier,
+                        "message_id": f"0x{request.message_id:x}",
+                        "message_name": request.message_name,
+                        "strategy": request.strategy,
                         "frame_format": frame.frame_format.value,
-                        "frame_type": frame.frame_type.value,
                         "dlc": frame.dlc,
                         "payload_hex": frame.to_hex_payload(),
+                        "signal_values": json.dumps(request.signal_values, sort_keys=True, ensure_ascii=False),
                         "sent": int(observation.sent),
-                        "accepted": int(observation.sent),
                         "fault": int(observation.fault),
                         "state": observation.state,
                         "reason": observation.reason,
                         "response_count": observation.response_count,
-                        "response_ids": encode_int_list(observation.response_ids),
+                        "response_ids": ";".join(f"0x{value:x}" for value in observation.response_ids),
                         "response_payloads": ";".join(observation.response_payloads),
+                        "decoded_responses": json.dumps(decoded_response_rows, ensure_ascii=False, sort_keys=True),
                         "latency_ms": f"{observation.latency_ms:.3f}",
                         "error": observation.error,
                         "coverage_count": len(coverage),
@@ -209,17 +233,20 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
     write_summary(
         summary_path=summary_path,
         config=config,
+        database=database,
         csv_path=csv_path,
         sent=sent,
         faults=faults,
         responses=responses,
+        decoded_responses=decoded_responses,
         completed_cases=completed_cases,
         interrupted=interrupted,
-        reasons=reasons,
+        messages_seen=messages_seen,
+        signals_seen=signals_seen,
         coverage=coverage,
     )
 
-    return FuzzResult(
+    return DBCFuzzResult(
         campaign=config.campaign,
         cases=config.cases,
         completed_cases=completed_cases,
@@ -227,115 +254,55 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
         sent=sent,
         faults=faults,
         responses=responses,
-        unique_reasons=len(reasons),
+        decoded_responses=decoded_responses,
+        unique_messages=len(messages_seen),
+        unique_signals=len(signals_seen),
         coverage_points=len(coverage),
         csv_path=csv_path,
         summary_path=summary_path,
     )
 
 
-def generate_frame(rng: random.Random, case_id: int, current_timestamp_ms: int, config: CANFuzzingStrategyConfig) -> CANFrame:
-    frame_format = choose_frame_format(rng, config)
-    frame_type = choose_frame_type(rng, config)
-    identifier = choose_identifier(rng, frame_format, config)
-    data = choose_payload(rng, identifier, config)
-    timestamp_ms = current_timestamp_ms + max(1, int(config.inter_frame_delay_ms))
-
-    return CANFrame(
-        identifier=identifier,
-        data=data,
-        frame_format=frame_format,
-        frame_type=frame_type,
-        timestamp_ms=timestamp_ms,
-    )
-
-
-def choose_frame_format(rng: random.Random, config: CANFuzzingStrategyConfig) -> FrameFormat:
-    if rng.random() < config.extended_probability:
-        return FrameFormat.EXTENDED
-    return FrameFormat.STANDARD
-
-
-def choose_frame_type(rng: random.Random, config: CANFuzzingStrategyConfig) -> FrameType:
-    choices = [FrameType.DATA]
-    weights = [1.0]
-    if config.include_remote:
-        choices.append(FrameType.REMOTE)
-        weights.append(0.05)
-    if config.include_error:
-        choices.append(FrameType.ERROR)
-        weights.append(0.02)
-    return rng.choices(choices, weights=weights, k=1)[0]
-
-
-def choose_identifier(rng: random.Random, frame_format: FrameFormat, config: CANFuzzingStrategyConfig) -> int:
-    upper_limit = 0x7FF if frame_format == FrameFormat.STANDARD else 0x1FFFFFFF
-    id_min = max(0, min(config.id_min, upper_limit))
-    id_max = max(id_min, min(config.id_max, upper_limit))
-    diagnostic_ids = [value for value in DIAGNOSTIC_IDS if id_min <= value <= id_max]
-    if diagnostic_ids and rng.random() < config.diagnostic_bias:
-        return rng.choice(diagnostic_ids)
-    return rng.randint(id_min, id_max)
-
-
-def choose_payload(rng: random.Random, identifier: int, config: CANFuzzingStrategyConfig) -> bytes:
-    if identifier in DIAGNOSTIC_IDS and rng.random() < 0.75:
-        templates = COMMON_DIAGNOSTIC_TEMPLATES_FD if config.fd else COMMON_DIAGNOSTIC_TEMPLATES
-        data = rng.choice(templates)
-        return bytes(pad_classic_payload(list(data), rng))
-
-    max_len = 64 if config.fd else 8
-    lengths = COMMON_FD_LENGTHS if config.fd else COMMON_CLASSIC_LENGTHS
-    interesting_lengths = [value for value in lengths if value <= max_len]
-    length = rng.choice(interesting_lengths)
-    return bytes(rng.randrange(256) for _ in range(length))
-
-
-def pad_classic_payload(data: list[int], rng: random.Random) -> list[int]:
-    data = data[:8]
-    if len(data) < 8 and rng.random() < 0.7:
-        data = data + [0x00] * (8 - len(data))
-    return data
-
-
-def classify_coverage(frame: CANFrame, observation) -> set[str]:
+def build_coverage_points(request: DBCRequest, observation, decoded_responses: list[dict[str, object]]) -> set[str]:
     points = {
-        f"tx_id_{frame.identifier:x}",
-        f"format_{frame.frame_format.value}",
-        f"type_{frame.frame_type.value}",
-        f"reason_{observation.reason}",
+        f"tx_message_{request.message_name}",
+        f"tx_strategy_{request.strategy}",
+        f"tx_payload_len_{len(request.payload)}",
     }
-    if frame.data:
-        if frame.data[0] <= 0x07 and len(frame.data) > 1:
-            points.add(f"service_{frame.data[1]:02x}")
-        else:
-            points.add(f"byte0_{frame.data[0]:02x}")
+    for signal_name in request.signal_values:
+        points.add(f"tx_signal_{signal_name}")
     for response_id in observation.response_ids:
         points.add(f"rx_id_{response_id:x}")
+    for response in decoded_responses:
+        message_name = str(response.get("message_name", ""))
+        if message_name:
+            points.add(f"rx_message_{message_name}")
+        signals = response.get("signals", {})
+        if isinstance(signals, dict):
+            for signal_name in signals:
+                points.add(f"rx_signal_{signal_name}")
     return points
-
-
-def encode_int_list(values: list[int]) -> str:
-    return ";".join(f"0x{value:x}" for value in values)
 
 
 def result_fieldnames() -> list[str]:
     return [
         "case_id",
         "timestamp_ms",
-        "identifier",
+        "message_id",
+        "message_name",
+        "strategy",
         "frame_format",
-        "frame_type",
         "dlc",
         "payload_hex",
+        "signal_values",
         "sent",
-        "accepted",
         "fault",
         "state",
         "reason",
         "response_count",
         "response_ids",
         "response_payloads",
+        "decoded_responses",
         "latency_ms",
         "error",
         "coverage_count",
@@ -344,14 +311,17 @@ def result_fieldnames() -> list[str]:
 
 def write_summary(
     summary_path: Path,
-    config: FuzzConfig,
+    config: DBCFuzzConfig,
+    database: DBCDatabase,
     csv_path: Path,
     sent: int,
     faults: int,
     responses: int,
+    decoded_responses: int,
     completed_cases: int,
     interrupted: bool,
-    reasons: set[str],
+    messages_seen: set[str],
+    signals_seen: set[str],
     coverage: set[str],
 ) -> None:
     denominator = completed_cases or 1
@@ -359,6 +329,9 @@ def write_summary(
         "campaign": config.campaign,
         "status": "interrupted" if interrupted else "completed",
         "interrupted": interrupted,
+        "dbc_file": str(config.dbc_file),
+        "message_count": len(database.messages),
+        "signal_count": database.signal_count,
         "cases": config.cases,
         "requested_cases": config.cases,
         "completed_cases": completed_cases,
@@ -366,17 +339,110 @@ def write_summary(
         "interface": config.interface,
         "channel": config.channel,
         "bitrate": config.bitrate,
-        "fd": config.fd,
+        "fd": config.fd or database.requires_fd,
         "sent": sent,
         "faults": faults,
         "responses": responses,
+        "decoded_responses": decoded_responses,
         "send_rate": sent / denominator,
         "fault_rate": faults / denominator,
         "response_rate": responses / denominator,
-        "unique_reasons": len(reasons),
+        "unique_messages": len(messages_seen),
+        "unique_signals": len(signals_seen),
         "coverage_points": len(coverage),
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+
+
+
+
+
+
+@dataclass(frozen=True)
+class DBCRequest:
+    message_id: int
+    message_name: str
+    payload: bytes
+    signal_values: dict[str, Any]
+    strategy: str
+
+
+def choose_message(rng: random.Random, database: DBCDatabase) -> DBCMessage:
+    weights = [max(1, len(message.signals)) + max(1, message.size) for message in database.messages]
+    return rng.choices(database.messages, weights=weights, k=1)[0]
+
+
+def build_request(rng: random.Random, database: DBCDatabase) -> DBCRequest:
+    message = choose_message(rng, database)
+    strategy = rng.choice(["baseline", "boundary", "random", "choices"])
+    values = build_signal_values(rng, message, strategy)
+    payload = message.encode(values)
+    return DBCRequest(
+        message_id=message.frame_id,
+        message_name=message.name,
+        payload=payload,
+        signal_values=values,
+        strategy=strategy,
+    )
+
+
+def build_signal_values(rng: random.Random, message: DBCMessage, strategy: str) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for signal in message.signals:
+        values[signal.name] = choose_signal_value(rng, signal, strategy)
+    return values
+
+
+def choose_signal_value(rng: random.Random, signal: DBCSignal, strategy: str) -> Any:
+    if signal.choices:
+        choice_values = [value for value, _ in signal.choices]
+        if strategy == "baseline":
+            return choice_values[0]
+        return rng.choice(choice_values)
+
+    candidates = interesting_values(signal)
+    if strategy == "baseline":
+        return signal.baseline_value()
+    if strategy == "boundary":
+        return rng.choice(candidates)
+    if strategy == "choices":
+        return rng.choice(candidates[: max(1, min(4, len(candidates)))])
+    return random_value(rng, signal)
+
+
+def interesting_values(signal: DBCSignal) -> list[int | float]:
+    values: list[int | float] = []
+    raw_min = signal.raw_min
+    raw_max = signal.raw_max
+    for raw in (raw_min, raw_min + 1, -1, 0, 1, raw_max - 1, raw_max):
+        if raw < raw_min or raw > raw_max:
+            continue
+        values.append(coerce_number(raw * signal.factor + signal.offset))
+    if signal.minimum is not None:
+        values.append(coerce_number(signal.minimum))
+    if signal.maximum is not None:
+        values.append(coerce_number(signal.maximum))
+    if not values:
+        values.append(signal.baseline_value())
+    return dedupe(values)
+
+
+def random_value(rng: random.Random, signal: DBCSignal) -> int | float:
+    raw = rng.randint(signal.raw_min, signal.raw_max)
+    return coerce_number(raw * signal.factor + signal.offset)
+
+
+def dedupe(values: list[int | float]) -> list[int | float]:
+    seen: set[tuple[type, Any]] = set()
+    result: list[int | float] = []
+    for value in values:
+        key = (type(value), value)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
 
 

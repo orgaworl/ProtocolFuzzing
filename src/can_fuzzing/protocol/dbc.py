@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
@@ -304,4 +304,5 @@ def get_bit(payload: bytes, bit_index: int) -> int:
     if byte_index < 0 or byte_index >= len(payload):
         return 0
     return (payload[byte_index] >> (bit_index % 8)) & 1
+
 

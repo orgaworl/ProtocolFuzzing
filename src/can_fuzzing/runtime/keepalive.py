@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import threading
 import time
@@ -196,6 +196,7 @@ class KeepaliveSession:
 
 def keepalive_response_fieldnames() -> list[str]:
     return ["timestamp", "arbitration_id", "dlc", "payload_hex", "fd"]
+
 
 
 

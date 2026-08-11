@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
@@ -167,4 +167,5 @@ COMMON_AFL_DICTIONARY_ENTRIES = dedupe_bytes(
     + COMMON_DIAGNOSTIC_TEMPLATES
     + COMMON_DIAGNOSTIC_TEMPLATES_FD
 )
+
 

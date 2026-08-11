@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import sys
@@ -272,6 +272,7 @@ def fdcheck_main() -> None:
 
 def scan_main() -> None:
     invoke_click(_scan_click, "scan")
+
 
 
 

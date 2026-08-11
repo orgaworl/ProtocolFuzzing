@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
@@ -61,5 +61,6 @@ class CANFrame:
             frame_type=frame_type,
             timestamp_ms=timestamp_ms,
         )
+
 
 
