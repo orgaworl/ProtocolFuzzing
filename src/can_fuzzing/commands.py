@@ -7,8 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from .runtime.adapters import CANConnectionError, CANHardwareAdapter
-from .runtime.keepalive import KeepaliveConfig, KeepaliveWorker
+from .runtime.adapters import CANHardwareAdapter
+from .runtime.errors import CANConnectionError
 from .config import (
     build_fuzz_keepalive_config,
     normalize_protocol,
@@ -16,14 +16,14 @@ from .config import (
     parse_interface_names,
     parse_int_list,
 )
-from .runtime.discovery import list_can_interfaces
-from .runtime.fdcheck import FDCheckConfig, run_fdcheck
+from .scanning.hardware_scan import list_can_interfaces
+from .scanning.can_fd_scan import FDCheckConfig, run_fdcheck
 from .fuzzing.can_fuzz import FuzzConfig, run_fuzzing
 from .fuzzing.dbc_fuzz import DBCFuzzConfig, run_dbc_fuzzing
 from .fuzzing.obd_fuzz import OBDFuzzConfig, run_obd_fuzzing
 from .fuzzing.private_control_fuzz import PrivateFuzzConfig, run_private_fuzzing
 from .fuzzing.uds_fuzz import UDSFuzzConfig, run_uds_fuzzing
-from .runtime.scanner import ScanConfig, run_scan
+from .scanning.can_id_scan import ScanConfig, run_scan
 from .log import (
     format_bool,
     log_can_event,
@@ -512,6 +512,9 @@ def clean_directory(path: Path) -> None:
             shutil.rmtree(child)
         else:
             child.unlink()
+
+
+
 
 
 

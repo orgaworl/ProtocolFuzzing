@@ -3,7 +3,7 @@
 import random
 from dataclasses import dataclass
 
-from .common import random_bytes
+from ..fuzzing.utils import random_bytes
 from .dictionary import (
     UDS_COMMUNICATION_SUBFUNCTIONS,
     UDS_DIDS,
@@ -174,4 +174,6 @@ def choose_did(rng: random.Random) -> bytes:
         return rng.choice(UDS_DIDS)
     did = rng.randrange(0x0000, 0xFFFF)
     return bytes([(did >> 8) & 0xFF, did & 0xFF])
+
+
 

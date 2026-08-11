@@ -306,3 +306,4 @@ def get_bit(payload: bytes, bit_index: int) -> int:
     return (payload[byte_index] >> (bit_index % 8)) & 1
 
 
+

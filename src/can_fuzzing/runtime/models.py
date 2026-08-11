@@ -63,4 +63,14 @@ class CANFrame:
         )
 
 
-
+@dataclass(frozen=True)
+class HardwareObservation:
+    sent: bool
+    fault: bool
+    state: str
+    reason: str
+    response_count: int
+    response_ids: list[int]
+    response_payloads: list[str]
+    latency_ms: float
+    error: str = ""

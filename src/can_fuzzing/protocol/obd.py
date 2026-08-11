@@ -3,7 +3,7 @@
 import random
 from dataclasses import dataclass
 
-from .common import random_bytes
+from ..fuzzing.utils import random_bytes
 from .dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
 from .isotp import decode_isotp_payload, encode_isotp_single_frame
 
@@ -98,4 +98,6 @@ def summarize_responses(response_payloads: list[str], request_mode: int) -> dict
         else:
             kind = f"service_0x{service:02x}"
     return {"positive": positive, "negative": negative, "kind": kind}
+
+
 

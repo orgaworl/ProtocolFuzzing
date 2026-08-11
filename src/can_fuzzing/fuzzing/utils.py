@@ -32,3 +32,4 @@ def report_progress(progress_callback: Callable[[dict], None] | None, **snapshot
         return
     progress_callback(snapshot)
 
+

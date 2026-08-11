@@ -3,44 +3,22 @@
 import contextlib
 import io
 import logging
-import time
 import threading
-from dataclasses import dataclass
+import time
 from collections.abc import Iterable
 from typing import Any
 
-from .discovery import list_can_interfaces
-from .models import CANFrame, FrameType
+from .errors import (
+    CANConnectionError,
+    build_can_error_message,
+    build_os_error_message,
+    build_unknown_channel_message,
+)
+from .models import CANFrame, FrameType, HardwareObservation
+from .timing import build_fd_timing
 
 DEFAULT_CAN_BITRATE_CANDIDATES = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
 DEFAULT_CAN_FD_DATA_BITRATE_CANDIDATES = (2000000, 5000000, 4000000, 1000000)
-
-
-@dataclass(frozen=True)
-class HardwareObservation:
-    sent: bool
-    fault: bool
-    state: str
-    reason: str
-    response_count: int
-    response_ids: list[int]
-    response_payloads: list[str]
-    latency_ms: float
-    error: str = ""
-
-
-class CANConnectionError(RuntimeError):
-    pass
-
-
-def quiet_call(func, *args, **kwargs):
-    previous_disable_level = logging.root.manager.disable
-    try:
-        logging.disable(logging.CRITICAL)
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return func(*args, **kwargs)
-    finally:
-        logging.disable(previous_disable_level)
 
 
 class CANHardwareAdapter:
@@ -83,6 +61,7 @@ class CANHardwareAdapter:
         self.check_message = check_message
         self.drop_echo = drop_echo
         self._bus: Any = None
+        self._pending_messages: list[Any] = []
         self._io_lock = threading.RLock()
 
     def __enter__(self) -> "CANHardwareAdapter":
@@ -93,8 +72,7 @@ class CANHardwareAdapter:
                 import can
         except ImportError as exc:
             raise CANConnectionError(
-                "python-can is required for real CAN device testing. "
-                "Install dependencies with pip install -e . or pip install python-can."
+                "python-can is required for real CAN device testing. Install dependencies with pip install -e . or pip install python-can."
             ) from exc
         finally:
             logging.disable(previous_disable_level)
@@ -103,7 +81,7 @@ class CANHardwareAdapter:
             if self._should_auto_detect_bitrate():
                 self._bus = self._open_with_auto_bitrate(can)
             else:
-                self._bus = quiet_call(can.interface.Bus, **self._build_bus_kwargs(self.bitrate, self.data_bitrate, self.timing))
+                self._bus = self._open_bus(can, self.bitrate, self.data_bitrate, self.timing)
                 self.detected_bitrate = self.bitrate
                 self.detected_data_bitrate = self.data_bitrate
         except KeyError as exc:
@@ -116,6 +94,10 @@ class CANHardwareAdapter:
             logging.disable(previous_disable_level)
         return self
 
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._bus is not None:
+            quiet_shutdown(self._bus)
+            self._bus = None
 
     def _should_auto_detect_bitrate(self) -> bool:
         if not self.auto_bitrate:
@@ -124,165 +106,115 @@ class CANHardwareAdapter:
             return False
         return self.bitrate is None or (self.fd and self.data_bitrate is None)
 
-    def _build_bus_kwargs(self, bitrate: int | None, data_bitrate: int | None, timing: Any | None = None) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {
-            "interface": self.interface,
-            "channel": self.channel,
-        }
+    def _open_bus(self, can_module: Any, bitrate: int | None, data_bitrate: int | None, timing: Any | None = None):
+        kwargs: dict[str, Any] = {"interface": self.interface, "channel": self.channel}
         if bitrate is not None:
             kwargs["bitrate"] = bitrate
-        resolved_timing = timing
-        if self.fd and resolved_timing is None and self.interface == "pcan" and bitrate is not None and data_bitrate is not None:
-            resolved_timing = build_fd_timing(
-                fd_clock=self.fd_clock,
-                bitrate=bitrate,
-                data_bitrate=data_bitrate,
-                nominal_sample_point=self.nominal_sample_point,
-                data_sample_point=self.data_sample_point,
-            )
         if self.fd:
             kwargs["fd"] = True
-        if resolved_timing is not None:
-            kwargs["timing"] = resolved_timing
-        if data_bitrate is not None and resolved_timing is None:
-            kwargs["data_bitrate"] = data_bitrate
-        kwargs["receive_own_messages"] = False
-        return kwargs
+            if timing is not None:
+                kwargs["timing"] = timing
+            if data_bitrate is not None:
+                kwargs["data_bitrate"] = data_bitrate
+        return quiet_call(can_module.interface.Bus, **kwargs)
 
     def _open_with_auto_bitrate(self, can_module: Any):
-        candidates = self._bitrate_candidate_pairs()
-        errors: list[str] = []
-        fallback: tuple[Any, int | None, int | None] | None = None
-        for bitrate, data_bitrate in candidates:
-            try:
-                kwargs = self._build_bus_kwargs(bitrate, data_bitrate, None)
-                bus = quiet_call(can_module.interface.Bus, **kwargs)
-            except (CANConnectionError, KeyError, OSError, can_module.CanError, ValueError) as exc:
-                errors.append(f"bitrate={bitrate} data_bitrate={data_bitrate}: {exc}")
-                continue
-            try:
-                message = quiet_call(bus.recv, timeout=self.bitrate_probe_timeout)
-            except can_module.CanError as exc:
-                errors.append(f"bitrate={bitrate} data_bitrate={data_bitrate}: receive failed: {exc}")
-                quiet_shutdown(bus)
-                continue
-            if message is not None:
-                self.bitrate = bitrate
-                self.data_bitrate = data_bitrate
-                self.detected_bitrate = bitrate
-                self.detected_data_bitrate = data_bitrate
-                self.auto_bitrate_status = "detected_from_bus_traffic"
-                return bus
-            if fallback is None:
-                fallback = (bus, bitrate, data_bitrate)
-            else:
-                quiet_shutdown(bus)
+        attempts: list[tuple[int | None, int | None, Any | None]] = []
+        if self.fd:
+            nominal_candidates = self.bitrate_candidates if self.bitrate is None else (self.bitrate,)
+            data_candidates = self.data_bitrate_candidates if self.data_bitrate is None else (self.data_bitrate,)
+            for bitrate in nominal_candidates:
+                for data_bitrate in data_candidates:
+                    attempts.append(
+                        (
+                            bitrate,
+                            data_bitrate,
+                            build_fd_timing(
+                                self.fd_clock,
+                                bitrate,
+                                data_bitrate,
+                                self.nominal_sample_point,
+                                self.data_sample_point,
+                            ),
+                        )
+                    )
+        else:
+            candidates = self.bitrate_candidates if self.bitrate is None else (self.bitrate,)
+            for bitrate in candidates:
+                attempts.append((bitrate, None, None))
 
-        if fallback is not None:
-            bus, bitrate, data_bitrate = fallback
-            self.bitrate = bitrate
-            self.data_bitrate = data_bitrate
+        last_error: Exception | None = None
+        for bitrate, data_bitrate, timing in attempts:
+            try:
+                bus = self._open_bus(can_module, bitrate, data_bitrate, timing)
+                observed = quiet_call(bus.recv, timeout=self.bitrate_probe_timeout)
+            except (CANConnectionError, KeyError, OSError, can_module.CanError, ValueError) as exc:
+                last_error = exc
+                continue
+            if observed is None:
+                quiet_shutdown(bus)
+                continue
+            self._pending_messages.append(observed)
             self.detected_bitrate = bitrate
             self.detected_data_bitrate = data_bitrate
-            self.auto_bitrate_status = "fallback_no_bus_traffic"
+            self.auto_bitrate_status = "detected_from_bus_traffic"
+            if bitrate is not None:
+                self.bitrate = bitrate
+            if data_bitrate is not None:
+                self.data_bitrate = data_bitrate
             return bus
-        detail = "; ".join(errors[-5:]) if errors else "no candidates were tested"
-        raise CANConnectionError(f"Could not auto-detect CAN hardware bitrate for interface {self.interface!r} channel {self.channel!r}. {detail}")
 
-    def _bitrate_candidate_pairs(self) -> list[tuple[int | None, int | None]]:
-        bitrates = (self.bitrate,) if self.bitrate is not None else self.bitrate_candidates
-        if not self.fd:
-            return [(bitrate, None) for bitrate in bitrates]
-        data_bitrates = (self.data_bitrate,) if self.data_bitrate is not None else self.data_bitrate_candidates
-        return [(bitrate, data_bitrate) for bitrate in bitrates for data_bitrate in data_bitrates]
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if self._bus is not None:
-            self._bus.shutdown()
-            self._bus = None
+        detail = f"Last error: {last_error}" if last_error is not None else "No candidate bitrate was attempted."
+        raise CANConnectionError(
+            f"Could not auto-detect CAN hardware bitrate for interface {self.interface!r} channel {self.channel!r}. {detail}"
+        )
 
     def transact(self, frame: CANFrame) -> HardwareObservation:
         if self._bus is None:
             raise RuntimeError("CAN bus is not open")
-
-        try:
-            import can
-        except ImportError as exc:
-            raise RuntimeError("python-can is required for real CAN device testing") from exc
-
+        start = time.perf_counter()
+        message = self._build_message(frame)
         with self._io_lock:
-            self.drain_pending()
-            message = self._build_message(frame, is_fd=self.fd)
-
-            start = time.perf_counter()
             try:
                 quiet_call(self._bus.send, message)
-            except can.CanError as exc:
+            except Exception as exc:
                 latency = (time.perf_counter() - start) * 1000.0
-                return HardwareObservation(
-                    sent=False,
-                    fault=True,
-                    state="send_error",
-                    reason="send_error",
-                    response_count=0,
-                    response_ids=[],
-                    response_payloads=[],
-                    latency_ms=latency,
-                    error=str(exc),
-                )
+                return HardwareObservation(False, True, "send_error", "send_error", 0, [], [], latency, str(exc))
 
-            responses = []
-            deadline = time.perf_counter() + self.receive_timeout
-            while True:
-                remaining = deadline - time.perf_counter()
-                if remaining <= 0:
-                    break
+            responses: list[Any] = []
+            deadline = time.perf_counter() + max(0.0, self.receive_timeout)
+            while time.perf_counter() < deadline:
+                remaining = max(0.0, deadline - time.perf_counter())
                 try:
-                    response = quiet_call(self._bus.recv, timeout=remaining)
-                except can.CanError as exc:
+                    response = self._take_pending_message()
+                    if response is None:
+                        response = quiet_call(self._bus.recv, timeout=remaining)
+                except Exception as exc:
                     latency = (time.perf_counter() - start) * 1000.0
                     return HardwareObservation(
-                        sent=True,
-                        fault=True,
-                        state="receive_error",
-                        reason="receive_error",
-                        response_count=len(responses),
-                        response_ids=[msg.arbitration_id for msg in responses],
-                        response_payloads=[bytes(msg.data).hex() for msg in responses],
-                        latency_ms=latency,
-                        error=str(exc),
+                        True,
+                        True,
+                        "receive_error",
+                        "receive_error",
+                        len(responses),
+                        [msg.arbitration_id for msg in responses],
+                        [bytes(msg.data).hex() for msg in responses],
+                        latency,
+                        str(exc),
                     )
                 if response is None:
                     break
                 if self.drop_echo and self._is_echo_message(message, response):
                     continue
-                if response.is_rx:
+                if getattr(response, "is_rx", True):
                     responses.append(response)
 
             latency = (time.perf_counter() - start) * 1000.0
             response_ids = [msg.arbitration_id for msg in responses]
             response_payloads = [bytes(msg.data).hex() for msg in responses]
             if responses:
-                return HardwareObservation(
-                    sent=True,
-                    fault=False,
-                    state="response",
-                    reason="response_received",
-                    response_count=len(responses),
-                    response_ids=response_ids,
-                    response_payloads=response_payloads,
-                    latency_ms=latency,
-                )
-            return HardwareObservation(
-                sent=True,
-                fault=False,
-                state="no_response",
-                reason="no_response",
-                response_count=0,
-                response_ids=[],
-                response_payloads=[],
-                latency_ms=latency,
-            )
+                return HardwareObservation(True, False, "response", "response_received", len(responses), response_ids, response_payloads, latency)
+            return HardwareObservation(True, False, "no_response", "no_response", 0, [], [], latency)
 
     def send_frame(self, frame: CANFrame, is_fd: bool | None = None, check_message: bool | None = None) -> None:
         if self._bus is None:
@@ -299,6 +231,9 @@ class CANHardwareAdapter:
         if self._bus is None:
             raise RuntimeError("CAN bus is not open")
         with self._io_lock:
+            pending = self._take_pending_message()
+            if pending is not None:
+                return pending
             return quiet_call(self._bus.recv, timeout=timeout)
 
     def io_lock(self):
@@ -307,11 +242,17 @@ class CANHardwareAdapter:
     def drain_pending(self) -> None:
         if self._bus is None:
             return
+        self._pending_messages.clear()
         while True:
             with self._io_lock:
                 msg = quiet_call(self._bus.recv, timeout=0.0)
             if msg is None:
                 return
+
+    def _take_pending_message(self):
+        if self._pending_messages:
+            return self._pending_messages.pop(0)
+        return None
 
     @staticmethod
     def _is_echo_message(sent_message: Any, received_message: Any) -> bool:
@@ -340,106 +281,18 @@ class CANHardwareAdapter:
         )
 
 
+def quiet_call(func, *args, **kwargs):
+    previous_disable_level = logging.root.manager.disable
+    try:
+        logging.disable(logging.CRITICAL)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return func(*args, **kwargs)
+    finally:
+        logging.disable(previous_disable_level)
+
 
 def quiet_shutdown(bus: Any) -> None:
     try:
         quiet_call(bus.shutdown)
     except Exception:
         return
-
-
-
-def build_fd_timing(
-    fd_clock: int,
-    bitrate: int,
-    data_bitrate: int,
-    nominal_sample_point: float = 87.5,
-    data_sample_point: float = 80.0,
-):
-    try:
-        from can import BitTimingFd
-    except ImportError as exc:
-        raise CANConnectionError("python-can is required for CAN FD timing generation") from exc
-    try:
-        return BitTimingFd.from_sample_point(
-            f_clock=fd_clock,
-            nom_bitrate=bitrate,
-            nom_sample_point=nominal_sample_point,
-            data_bitrate=data_bitrate,
-            data_sample_point=data_sample_point,
-        )
-    except ValueError as exc:
-        raise CANConnectionError(f"invalid CAN FD timing parameters: {exc}") from exc
-
-
-def build_unknown_channel_message(interface: str, channel: str) -> str:
-    lines = [
-        f"Unknown CAN channel {channel!r} for interface {interface!r}.",
-    ]
-    if interface == "pcan" and channel.startswith("PCAN-"):
-        lines.append("PCAN channel names use underscores, not hyphens. Did you mean PCAN_USBBUS1?")
-    lines.extend(discovery_hint(interface))
-    return "\n".join(lines)
-
-
-def build_can_error_message(interface: str, channel: str, exc: Exception) -> str:
-    lines = [
-        f"Could not open CAN interface {interface!r} channel {channel!r}.",
-        f"Backend error: {exc}",
-    ]
-    lines.extend(channel_status_hint(interface, channel))
-    lines.extend(discovery_hint(interface))
-    return "\n".join(lines)
-
-
-def build_os_error_message(interface: str, channel: str, exc: OSError) -> str:
-    lines = [
-        f"Could not open CAN interface {interface!r} channel {channel!r}.",
-        f"OS error: {exc}",
-    ]
-    if interface == "socketcan":
-        lines.append("SocketCAN is normally available on Linux. On Windows, use a backend such as pcan, vector, or slcan.")
-    lines.extend(discovery_hint(interface))
-    return "\n".join(lines)
-
-
-def discovery_hint(interface: str) -> list[str]:
-    lines = ["Run uv run list to see detected CAN interfaces."]
-    try:
-        configs = list_can_interfaces(interfaces=[interface], include_virtual=False, verbose=False)
-    except RuntimeError:
-        return lines
-    if configs:
-        channels = ", ".join(str(config.get("channel", "")) for config in configs)
-        lines.append(f"Detected {interface} channel(s): {channels}")
-    return lines
-
-
-def channel_status_hint(interface: str, channel: str) -> list[str]:
-    if interface != "pcan":
-        return []
-    try:
-        configs = list_can_interfaces(interfaces=[interface], include_virtual=False, verbose=False)
-    except RuntimeError:
-        return ["For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel."]
-    for config in configs:
-        if str(config.get("channel", "")) != channel:
-            continue
-        condition = config.get("channel_condition")
-        if condition == 0:
-            return ["The PCAN channel is unavailable."]
-        if condition == 1:
-            return ["The PCAN channel is available, but opening still failed. Check the PCAN driver and channel parameters."]
-        if condition == 2:
-            return ["The PCAN channel is occupied by another client."]
-        if condition == 3:
-            return ["The PCAN channel is occupied by PCAN-View or another PCAN client."]
-        return [f"The PCAN channel reported condition {condition}."]
-    return ["For PCAN-USB, check that PCAN-View or another PCAN client is not using the channel."]
-
-
-
-
-
-
-

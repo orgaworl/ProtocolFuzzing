@@ -144,9 +144,6 @@ progress_interval = 1
 progress_seconds = 1.0
 no_progress = false
 
-[plot]
-input = "result/can_baseline_cases.csv"
-output_dir = "plot"
 
 [clean]
 result_dir = "result"
