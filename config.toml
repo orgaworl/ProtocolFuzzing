@@ -1,16 +1,9 @@
-# Default CAN hardware settings shared by command sections unless overridden.
+# Shared CAN hardware defaults.
+[hardware]
+# interface = "pcan"
+# channel = "PCAN_USBBUS1"
 bitrate = 500000
-# Set bitrate = "auto" or auto_bitrate = true in a command section to enumerate common CAN/CAN FD bitrates.
-output_dir = "result"
-
-[fuzz]
-protocol = "can"
-keepalive = false
-cases = 10000
-seed = 1337
-campaign = "can_baseline"
 receive_timeout = 0.05
-inter_frame_delay_ms = 5.0
 fd = false
 data_bitrate = 2000000
 auto_bitrate = false
@@ -21,6 +14,17 @@ fd_timing_preset = "sae-j2284"
 fd_clock = 80000000
 nominal_sample_point = 87.5
 data_sample_point = 80.0
+check_message = true
+drop_echo = true
+
+[fuzz]
+protocol = "can"
+keepalive = false
+cases = 10000
+seed = 1337
+campaign = "can_baseline"
+output_dir = "result"
+inter_frame_delay_ms = 5.0
 id_min = 0x000
 id_max = 0x7ff
 diagnostic_bias = 0.6
@@ -34,66 +38,39 @@ no_progress = false
 [keepalive]
 # Shared by `uv run keepalive` and fuzzing entries when `keepalive = true` or `--keepalive` is set.
 preset = "tester-present"
-bitrate = 500000
-data_bitrate = 2000000
-auto_bitrate = false
-bitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]
-data_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]
-bitrate_probe_timeout = 0.2
-fd_timing_preset = "sae-j2284"
-fd_clock = 80000000
-nominal_sample_point = 87.5
-data_sample_point = 80.0
 arbitration_id = 0x7df
 payload = "02 3E 00"
 interval_ms = 500.0
 format = "standard"
-fd = false
 listen = true
 listen_timeout = 0.05
 check_message = true
 
 [fdcheck]
 campaign = "can_fd_check"
-fd_timing_preset = "sae-j2284"
-data_bitrate = 2000000
-auto_bitrate = false
-bitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]
-data_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]
-bitrate_probe_timeout = 0.2
-fd_clock = 80000000
-nominal_sample_point = 87.5
-data_sample_point = 80.0
+output_dir = "result"
 probe_timeout = 0.15
 probe_delay_ms = 20.0
+probe_lengths = [12, 16, 32]
 no_progress = false
 
 [scan]
 campaign = "can_scan"
+output_dir = "result"
 passive_duration = 10.0
 active_timeout = 0.25
 inter_probe_delay_ms = 50.0
 physical_start = 0x7e0
 physical_end = 0x7e7
-fd = false
-data_bitrate = 2000000
-auto_bitrate = false
-bitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]
-data_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]
-bitrate_probe_timeout = 0.2
-fd_timing_preset = "sae-j2284"
-fd_clock = 80000000
-nominal_sample_point = 87.5
-data_sample_point = 80.0
 passive_only = false
 active_only = false
 no_progress = false
 
 [udsfuzz]
+output_dir = "result"
 cases = 1000
 seed = 2024
 campaign = "uds_baseline"
-receive_timeout = 0.15
 inter_request_delay_ms = 10.0
 request_mode = "mixed"
 functional_id = 0x7df
@@ -106,10 +83,10 @@ progress_seconds = 1.0
 no_progress = false
 
 [obdfuzz]
+output_dir = "result"
 cases = 1000
 seed = 2025
 campaign = "obd_baseline"
-receive_timeout = 0.15
 inter_request_delay_ms = 20.0
 request_mode = "functional"
 functional_id = 0x7df
@@ -122,10 +99,10 @@ progress_seconds = 1.0
 no_progress = false
 
 [privatefuzz]
+output_dir = "result"
 cases = 1000
 seed = 2026
 campaign = "private_control_baseline"
-receive_timeout = 0.05
 inter_request_delay_ms = 10.0
 target_ids = [0x100, 0x101, 0x200, 0x201, 0x300, 0x301]
 opcodes = [0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x7f, 0x80, 0xfe, 0xff]
@@ -134,20 +111,12 @@ malformed_rate = 0.15
 min_payload_len = 1
 max_payload_len = 8
 extended = false
-fd = false
-data_bitrate = 2000000
-auto_bitrate = false
-bitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]
-data_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]
-bitrate_probe_timeout = 0.2
 progress_interval = 1
 progress_seconds = 1.0
 no_progress = false
 
-
 [clean]
 result_dir = "result"
-plot_dir = "plot"
 
 [list]
 interfaces = ["pcan", "vector", "kvaser", "slcan", "seeedstudio", "socketcan", "virtual"]

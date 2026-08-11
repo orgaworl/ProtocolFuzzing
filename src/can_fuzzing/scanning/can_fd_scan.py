@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import json
@@ -9,29 +9,18 @@ from typing import Any
 
 from ..runtime.adapters import CANHardwareAdapter
 from ..runtime.errors import CANConnectionError
-from ..runtime.models import CANFrame, FrameFormat, FrameType
+from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.timing import build_fd_timing
 from .hardware_scan import list_can_interfaces
 
 @dataclass(frozen=True)
 class FDCheckConfig:
-    interface: str
-    channel: str
-    bitrate: int | None = 500000
-    data_bitrate: int | None = 2000000
-    auto_bitrate: bool = False
-    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
-    data_bitrate_candidates: tuple[int, ...] = (2000000, 5000000, 4000000, 1000000)
-    bitrate_probe_timeout: float = 0.2
-    fd_timing_preset: str | None = "sae-j2284"
-    fd_clock: int = 80000000
-    nominal_sample_point: float = 87.5
-    data_sample_point: float = 80.0
-    output_dir: Path = Path("result")
-    campaign: str = "can_fd_check"
-    probe_timeout: float = 0.15
-    probe_delay_ms: float = 20.0
-    probe_lengths: tuple[int, ...] = (12, 16, 32)
+    hardware: CANHardwareConfig
+    output_dir: Path
+    campaign: str
+    probe_timeout: float
+    probe_delay_ms: float
+    probe_lengths: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -69,7 +58,7 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
     csv_path = config.output_dir / f"{config.campaign}_probes.csv"
     summary_path = config.output_dir / f"{config.campaign}_summary.json"
 
-    backend_reports_fd_support = detect_backend_fd_support(config.interface, config.channel)
+    backend_reports_fd_support = detect_backend_fd_support(config.hardware.interface, config.hardware.channel)
     hardware_fd_opened = False
     hardware_error = ""
     interrupted = False
@@ -83,30 +72,15 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
         fd_timing = build_config_fd_timing(config)
     except ValueError as exc:
         fd_timing_error = str(exc)
-    adapter_timing = fd_timing if config.interface == "pcan" else None
-    adapter_data_bitrate = None if adapter_timing is not None else config.data_bitrate
+    adapter_timing = fd_timing if config.hardware.interface == "pcan" else None
+    adapter_data_bitrate = None if adapter_timing is not None else config.hardware.data_bitrate
 
-    if config.interface == "pcan" and fd_timing is None:
+    if config.hardware.interface == "pcan" and fd_timing is None:
         hardware_error = f"PCAN CAN FD requires valid bit timing. {fd_timing_error}"
     try:
         if hardware_error:
             raise SkipFDOpen
-        with CANHardwareAdapter(
-            interface=config.interface,
-            channel=config.channel,
-            bitrate=config.bitrate,
-            receive_timeout=config.probe_timeout,
-            fd=True,
-            data_bitrate=adapter_data_bitrate,
-            auto_bitrate=config.auto_bitrate,
-            bitrate_candidates=config.bitrate_candidates,
-            data_bitrate_candidates=config.data_bitrate_candidates,
-            bitrate_probe_timeout=config.bitrate_probe_timeout,
-            fd_clock=config.fd_clock,
-            nominal_sample_point=config.nominal_sample_point,
-            data_sample_point=config.data_sample_point,
-            timing=adapter_timing,
-        ) as adapter:
+        with CANHardwareAdapter(config.hardware, timing=adapter_timing) as adapter:
             hardware_fd_opened = True
             probes = build_fd_probes(config)
             total = len(probes)
@@ -165,17 +139,17 @@ def run_fdcheck(config: FDCheckConfig, progress_callback=None) -> FDCheckResult:
         "campaign": config.campaign,
         "status": "interrupted" if interrupted else "completed",
         "interrupted": interrupted,
-        "interface": config.interface,
-        "channel": config.channel,
-        "bitrate": config.bitrate,
-        "data_bitrate": config.data_bitrate,
-        "auto_bitrate": config.auto_bitrate,
-        "bitrate_candidates": list(config.bitrate_candidates),
-        "data_bitrate_candidates": list(config.data_bitrate_candidates),
-        "fd_timing_preset": config.fd_timing_preset,
-        "fd_clock": config.fd_clock,
-        "nominal_sample_point": config.nominal_sample_point,
-        "data_sample_point": config.data_sample_point,
+        "interface": config.hardware.interface,
+        "channel": config.hardware.channel,
+        "bitrate": config.hardware.bitrate,
+        "data_bitrate": config.hardware.data_bitrate,
+        "auto_bitrate": config.hardware.auto_bitrate,
+        "bitrate_candidates": list(config.hardware.bitrate_candidates),
+        "data_bitrate_candidates": list(config.hardware.data_bitrate_candidates),
+        "fd_timing_preset": config.hardware.fd_timing_preset,
+        "fd_clock": config.hardware.fd_clock,
+        "nominal_sample_point": config.hardware.nominal_sample_point,
+        "data_sample_point": config.hardware.data_sample_point,
         "fd_timing": str(fd_timing) if fd_timing is not None else "",
         "fd_timing_error": fd_timing_error,
         "backend_reports_fd_support": backend_reports_fd_support,
@@ -224,17 +198,17 @@ def detect_backend_fd_support(interface: str, channel: str) -> bool | None:
 
 
 def build_config_fd_timing(config: FDCheckConfig):
-    if config.bitrate is None:
+    if config.hardware.bitrate is None:
         raise ValueError("--bitrate is required for CAN FD timing generation")
-    if config.data_bitrate is None:
+    if config.hardware.data_bitrate is None:
         raise ValueError("--data-bitrate is required for CAN FD timing generation")
     try:
         return build_fd_timing(
-            fd_clock=config.fd_clock,
-            bitrate=config.bitrate,
-            data_bitrate=config.data_bitrate,
-            nominal_sample_point=config.nominal_sample_point,
-            data_sample_point=config.data_sample_point,
+            fd_clock=config.hardware.fd_clock,
+            bitrate=config.hardware.bitrate,
+            data_bitrate=config.hardware.data_bitrate,
+            nominal_sample_point=config.hardware.nominal_sample_point,
+            data_sample_point=config.hardware.data_sample_point,
         )
     except CANConnectionError as exc:
         raise ValueError(str(exc)) from exc
@@ -363,14 +337,3 @@ def parse_hex_id_list(value: str) -> list[int]:
 
 def split_payload_list(value: str) -> list[str]:
     return [item for item in value.split(";") if item]
-
-
-
-
-
-
-
-
-
-
-

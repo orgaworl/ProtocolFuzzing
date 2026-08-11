@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import tomllib
 from pathlib import Path
@@ -8,6 +8,7 @@ from typing import Any
 import click
 
 from .runtime.keepalive import KeepaliveConfig
+from .runtime.models import CANHardwareConfig
 from .scanning.hardware_scan import DEFAULT_DISCOVERY_INTERFACES
 
 
@@ -114,6 +115,13 @@ FUZZ_PROTOCOL_SECTION_MAP = {
     "obd": "obdfuzz",
     "private": "privatefuzz",
 }
+FUZZ_PROTOCOL_CAMPAIGNS = {
+    "can": "can_baseline",
+    "dbc": "dbc_baseline",
+    "uds": "uds_baseline",
+    "obd": "obd_baseline",
+    "private": "private_control_baseline",
+}
 
 
 def normalize_protocol(value: str | None) -> str | None:
@@ -139,28 +147,6 @@ def parse_protocol(value: str) -> str:
     if normalized in {"can", "dbc", "uds", "obd", "private"}:
         return normalized
     raise click.BadParameter("protocol must be one of: can, dbc, uds, obd, private")
-
-
-
-def build_fuzz_keepalive_config(args: SimpleNamespace) -> KeepaliveConfig:
-    preset_name = normalize_keepalive_preset(getattr(args, "keepalive_preset", None)) or "tester-present"
-    preset = KEEPALIVE_PRESETS[preset_name]
-    frame_format = value_or_default(getattr(args, "keepalive_format", None), preset["format"])
-    return KeepaliveConfig(
-        enabled=bool(getattr(args, "keepalive", False)),
-        arbitration_id=value_or_default(getattr(args, "keepalive_id", None), preset["arbitration_id"]),
-        payload=parse_hex_bytes(value_or_default(getattr(args, "keepalive_payload", None), preset["payload"])),
-        interval_ms=value_or_default(getattr(args, "keepalive_interval_ms", None), 500.0),
-        extended=frame_format == "extended",
-        fd=value_or_default(getattr(args, "keepalive_fd", None), preset["fd"]),
-        listen=value_or_default(getattr(args, "keepalive_listen", None), preset["listen"]),
-        listen_timeout=value_or_default(getattr(args, "keepalive_listen_timeout", None), preset["listen_timeout"]),
-        check_message=value_or_default(getattr(args, "keepalive_check_message", None), preset["check_message"]),
-    )
-
-
-def value_or_default(value: Any, default: Any) -> Any:
-    return default if value is None else value
 
 
 def parse_int(value: str) -> int:
@@ -193,156 +179,85 @@ def parse_interface_names(value: str) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
+
+HARDWARE_KEYS = {
+
+    "interface",
+    "channel",
+    "bitrate",
+    "receive_timeout",
+    "fd",
+    "data_bitrate",
+    "auto_bitrate",
+    "bitrate_candidates",
+    "data_bitrate_candidates",
+    "bitrate_probe_timeout",
+    "fd_timing_preset",
+    "fd_clock",
+    "nominal_sample_point",
+    "data_sample_point",
+    "check_message",
+    "drop_echo",
+}
+FUZZ_KEYS = {
+    "protocol",
+    "cases",
+    "seed",
+    "campaign",
+    "output_dir",
+    "receive_timeout",
+    "inter_frame_delay_ms",
+    "inter_request_delay_ms",
+    "dbc_file",
+    "request_mode",
+    "functional_id",
+    "physical_start",
+    "physical_end",
+    "service_bias",
+    "pid_bias",
+    "malformed_rate",
+    "id_min",
+    "id_max",
+    "diagnostic_bias",
+    "extended_probability",
+    "include_remote",
+    "include_error",
+    "target_ids",
+    "opcodes",
+    "structured_rate",
+    "min_payload_len",
+    "max_payload_len",
+    "extended",
+    "progress_interval",
+    "progress_seconds",
+    "keepalive",
+    "keepalive_preset",
+    "keepalive_id",
+    "keepalive_payload",
+    "keepalive_interval_ms",
+    "keepalive_format",
+    "keepalive_fd",
+    "keepalive_listen",
+    "keepalive_listen_timeout",
+    "keepalive_check_message",
+}
+LIST_KEYS = {"interfaces", "include_virtual", "json", "verbose"}
+CLEAN_KEYS = {"result_dir"}
+KEEPALIVE_FUZZ_KEYS = {"keepalive", "keepalive_preset", "keepalive_id", "keepalive_payload", "keepalive_interval_ms", "keepalive_format", "keepalive_fd", "keepalive_listen", "keepalive_listen_timeout", "keepalive_check_message"}
+KEEPALIVE_CLI_KEYS = {"preset", "fd", "arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"}
+FDCHECK_KEYS = {"campaign", "output_dir", "probe_timeout", "probe_delay_ms", "probe_lengths"}
+SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only"}
+FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
+    "can": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "id_min", "id_max", "diagnostic_bias", "extended_probability", "include_remote", "include_error", "progress_interval", "progress_seconds"},
+    "dbc": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "dbc_file", "progress_interval", "progress_seconds"},
+    "uds": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "service_bias", "malformed_rate", "progress_interval", "progress_seconds"},
+    "obd": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "pid_bias", "malformed_rate", "progress_interval", "progress_seconds"},
+    "private": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "target_ids", "opcodes", "structured_rate", "malformed_rate", "min_payload_len", "max_payload_len", "extended", "progress_interval", "progress_seconds"},
+}
+
 CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "keepalive_id", "arbitration_id"}
 CLICK_OPTIONAL_INT_KEYS = {"bitrate", "data_bitrate"}
-CLICK_LIST_AS_CSV_KEYS = {"interfaces", "target_ids", "opcodes", "bitrate_candidates", "data_bitrate_candidates"}
-
-
-FUZZ_DEFAULTS: dict[str, Any] = {
-    "config": None,
-    "protocol": "can",
-    "interface": None,
-    "channel": None,
-    "interfaces": None,
-    "include_virtual": False,
-    "json": False,
-    "verbose": False,
-    "bitrate": 500000,
-    "cases": 1000,
-    "seed": 1337,
-    "campaign": "can_baseline",
-    "output_dir": "result",
-    "receive_timeout": 0.05,
-    "inter_frame_delay_ms": 5.0,
-    "inter_request_delay_ms": 10.0,
-    "dbc_file": None,
-    "request_mode": "mixed",
-    "functional_id": 0x7DF,
-    "physical_start": 0x7E0,
-    "physical_end": 0x7E7,
-    "service_bias": 0.85,
-    "pid_bias": 0.8,
-    "malformed_rate": 0.15,
-    "fd": False,
-    "data_bitrate": None,
-    "auto_bitrate": False,
-    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
-    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
-    "bitrate_probe_timeout": 0.2,
-    "fd_timing_preset": None,
-    "fd_clock": 80000000,
-    "nominal_sample_point": 87.5,
-    "data_sample_point": 80.0,
-    "id_min": 0x000,
-    "id_max": 0x7FF,
-    "diagnostic_bias": 0.6,
-    "extended_probability": 0.0,
-    "include_remote": False,
-    "include_error": False,
-    "target_ids": "0x100,0x101,0x200,0x201,0x300,0x301",
-    "opcodes": "0x00,0x01,0x02,0x03,0x10,0x11,0x20,0x21,0x7f,0x80,0xfe,0xff",
-    "structured_rate": 0.7,
-    "min_payload_len": 1,
-    "max_payload_len": 8,
-    "extended": False,
-    "progress_interval": 1,
-    "progress_seconds": 1.0,
-    "no_progress": False,
-    "keepalive": False,
-    "keepalive_preset": "tester-present",
-    "keepalive_id": None,
-    "keepalive_payload": None,
-    "keepalive_interval_ms": None,
-    "keepalive_format": None,
-    "keepalive_fd": None,
-    "keepalive_listen": None,
-    "keepalive_listen_timeout": None,
-    "keepalive_check_message": None,
-}
-LIST_DEFAULTS: dict[str, Any] = {"config": None, "interfaces": ",".join(DEFAULT_DISCOVERY_INTERFACES), "include_virtual": False, "json": False, "verbose": False}
-CLEAN_DEFAULTS: dict[str, Any] = {"config": None, "result_dir": "result"}
-KEEPALIVE_DEFAULTS: dict[str, Any] = {
-    "config": None,
-    "preset": "tester-present",
-    "interface": None,
-    "channel": None,
-    "interfaces": None,
-    "include_virtual": False,
-    "json": False,
-    "verbose": False,
-    "bitrate": 500000,
-    "data_bitrate": None,
-    "auto_bitrate": False,
-    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
-    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
-    "bitrate_probe_timeout": 0.2,
-    "fd_timing_preset": None,
-    "fd_clock": 80000000,
-    "nominal_sample_point": 87.5,
-    "data_sample_point": 80.0,
-    "fd": False,
-    "arbitration_id": 0x7DF,
-    "payload": "02 3E 00",
-    "interval_ms": 500.0,
-    "format": "standard",
-    "listen": True,
-    "listen_timeout": 0.05,
-    "check_message": True,
-}
-FDCHECK_DEFAULTS: dict[str, Any] = {
-    "config": None,
-    "interface": None,
-    "channel": None,
-    "interfaces": None,
-    "include_virtual": False,
-    "json": False,
-    "verbose": False,
-    "bitrate": 500000,
-    "data_bitrate": 2000000,
-    "auto_bitrate": False,
-    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
-    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
-    "bitrate_probe_timeout": 0.2,
-    "fd_timing_preset": "sae-j2284",
-    "fd_clock": 80000000,
-    "nominal_sample_point": 87.5,
-    "data_sample_point": 80.0,
-    "campaign": "can_fd_check",
-    "output_dir": "result",
-    "probe_timeout": 0.15,
-    "probe_delay_ms": 20.0,
-    "no_progress": False,
-}
-SCAN_DEFAULTS: dict[str, Any] = {
-    "config": None,
-    "interface": None,
-    "channel": None,
-    "interfaces": None,
-    "include_virtual": False,
-    "json": False,
-    "verbose": False,
-    "bitrate": 500000,
-    "campaign": "can_scan",
-    "output_dir": "result",
-    "passive_duration": 10.0,
-    "active_timeout": 0.25,
-    "inter_probe_delay_ms": 50.0,
-    "physical_start": 0x7E0,
-    "physical_end": 0x7E7,
-    "fd": False,
-    "data_bitrate": None,
-    "auto_bitrate": False,
-    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
-    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
-    "bitrate_probe_timeout": 0.2,
-    "fd_timing_preset": None,
-    "fd_clock": 80000000,
-    "nominal_sample_point": 87.5,
-    "data_sample_point": 80.0,
-    "passive_only": False,
-    "active_only": False,
-    "no_progress": False,
-}
+CLICK_LIST_AS_CSV_KEYS = {"interfaces", "target_ids", "opcodes", "bitrate_candidates", "data_bitrate_candidates", "probe_lengths"}
 
 
 def normalize_config_value(key: str, value: Any) -> Any:
@@ -364,47 +279,42 @@ def normalize_config_value(key: str, value: Any) -> Any:
     return value
 
 
-def build_args(section: str, defaults: dict[str, Any], params: dict[str, Any]) -> SimpleNamespace:
-    merged = dict(defaults)
-    config_path = params.get("config")
-    if config_path:
-        raw_config = read_toml_config(Path(str(config_path)))
-        merged.update(extract_config(raw_config, defaults, section))
-        if section == "fuzz":
-            protocol = normalize_protocol(params.get("protocol") or merged.get("protocol")) or "can"
-            protocol_section = FUZZ_PROTOCOL_SECTION_MAP.get(protocol)
-            if protocol_section is not None:
-                merged.update(extract_config(raw_config, defaults, protocol_section))
-            merged.update(extract_keepalive_config(raw_config, defaults))
-    cli_keys = {key for key, value in params.items() if value is not None}
-    for key in cli_keys:
-        merged[key] = params[key]
-    if section == "fuzz":
-        merged["protocol"] = normalize_protocol(merged.get("protocol")) or "can"
-    if "fd_timing_preset" in defaults:
-        apply_fd_timing_preset(merged, cli_keys)
-    apply_auto_bitrate_tokens(merged)
-    return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})
+def extract_config(raw_config: dict[str, Any], allowed_keys: set[str], section: str) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    if section in {"hardware", "fuzz", "clean", "list", "keepalive", "fdcheck", "scan"}:
+        for key, value in raw_config.items():
+            if not isinstance(value, dict):
+                normalized_key = key.replace("-", "_")
+                if normalized_key in allowed_keys:
+                    merged[normalized_key] = value
+    section_config = raw_config.get(section, {})
+    if isinstance(section_config, dict):
+        for key, value in section_config.items():
+            normalized_key = key.replace("-", "_")
+            if normalized_key in allowed_keys:
+                merged[normalized_key] = value
+    return merged
 
 
-def build_keepalive_args(params: dict[str, Any]) -> SimpleNamespace:
-    config_values: dict[str, Any] = {}
-    config_path = params.get("config")
-    if config_path:
-        raw_config = read_toml_config(Path(str(config_path)))
-        config_values.update(extract_config(raw_config, KEEPALIVE_DEFAULTS, "keepalive"))
-    preset_name = normalize_keepalive_preset(params.get("preset") or config_values.get("preset")) or "tester-present"
-    preset = KEEPALIVE_PRESETS[preset_name]
-    merged = dict(KEEPALIVE_DEFAULTS)
-    merged.update({"preset": preset_name, "arbitration_id": preset["arbitration_id"], "payload": preset["payload"], "fd": preset["fd"], "format": preset["format"], "listen": preset["listen"], "listen_timeout": preset["listen_timeout"], "check_message": preset["check_message"]})
-    merged.update(config_values)
-    cli_keys = {key for key, value in params.items() if value is not None}
-    for key in cli_keys:
-        merged[key] = params[key]
-    merged["preset"] = normalize_keepalive_preset(merged.get("preset")) or preset_name
-    apply_fd_timing_preset(merged, cli_keys)
-    apply_auto_bitrate_tokens(merged)
-    return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})
+def extract_keepalive_config(raw_config: dict[str, Any]) -> dict[str, Any]:
+    section = raw_config.get("keepalive", {})
+    if not isinstance(section, dict):
+        return {}
+    mapping = {
+        "enabled": "keepalive",
+        "keepalive": "keepalive",
+        "preset": "keepalive_preset",
+        "arbitration_id": "keepalive_id",
+        "id": "keepalive_id",
+        "payload": "keepalive_payload",
+        "interval_ms": "keepalive_interval_ms",
+        "format": "keepalive_format",
+        "fd": "keepalive_fd",
+        "listen": "keepalive_listen",
+        "listen_timeout": "keepalive_listen_timeout",
+        "check_message": "keepalive_check_message",
+    }
+    return {dest: section[key] for key, dest in mapping.items() if key in section}
 
 
 def apply_auto_bitrate_tokens(merged: dict[str, Any]) -> None:
@@ -416,37 +326,172 @@ def apply_auto_bitrate_tokens(merged: dict[str, Any]) -> None:
         merged["auto_bitrate"] = True
 
 
+def hardware_required_keys(merged: dict[str, Any]) -> set[str]:
+    required = {"receive_timeout", "fd", "auto_bitrate", "check_message", "drop_echo"}
+    if merged.get("fd"):
+        required.update({"data_bitrate", "fd_clock", "nominal_sample_point", "data_sample_point"})
+    if merged.get("auto_bitrate"):
+        required.update({"bitrate_candidates", "bitrate_probe_timeout"})
+        if merged.get("fd"):
+            required.add("data_bitrate_candidates")
+    else:
+        required.add("bitrate")
+        if merged.get("fd"):
+            required.add("data_bitrate")
+    return required
 
-def extract_config(raw_config: dict[str, Any], defaults: dict[str, Any], section: str) -> dict[str, Any]:
+
+def protocol_required_keys(section: str, protocol: str) -> set[str]:
+    required = FUZZ_REQUIRED_KEYS_BY_PROTOCOL.get(protocol)
+    if required is None:
+        raise click.ClickException(f"unsupported protocol: {protocol}")
+    return required
+
+
+def _validate_required(section: str, merged: dict[str, Any], required_keys: set[str]) -> None:
+    missing = sorted(key for key in required_keys if merged.get(key) is None)
+    if missing:
+        raise click.ClickException(f"missing required config value(s) for {section}: {', '.join(missing)}")
+
+
+def _resolve_keepalive_values(source: Any, *, enabled: bool) -> tuple[int, bytes, float, bool, bool, bool, float, bool]:
+    preset_name = normalize_keepalive_preset(getattr(source, "keepalive_preset", None) or getattr(source, "preset", None))
+    preset = KEEPALIVE_PRESETS.get(preset_name, {})
+
+    def pick(attr_name: str, preset_key: str, required: bool = True) -> Any:
+        value = getattr(source, attr_name, None)
+        if value is None and preset_key in preset:
+            value = preset[preset_key]
+        if value is None and required:
+            raise click.ClickException(f"missing required config value: {attr_name}")
+        return value
+
+    if not enabled and preset_name is None and all(getattr(source, name, None) is None for name in (
+        "keepalive_id",
+        "keepalive_payload",
+        "keepalive_interval_ms",
+        "keepalive_format",
+        "keepalive_fd",
+        "keepalive_listen",
+        "keepalive_listen_timeout",
+        "keepalive_check_message",
+    )):
+        return (0, b"", 0.0, False, False, 0.0, False)
+
+    arbitration_id = int(pick("keepalive_id", "arbitration_id"))
+    payload_raw = pick("keepalive_payload", "payload")
+    interval_ms = float(pick("keepalive_interval_ms", "interval_ms"))
+    format_value = str(pick("keepalive_format", "format"))
+    fd_value = bool(pick("keepalive_fd", "fd"))
+    listen_value = bool(pick("keepalive_listen", "listen"))
+    listen_timeout = float(pick("keepalive_listen_timeout", "listen_timeout"))
+    check_message = bool(pick("keepalive_check_message", "check_message"))
+    return (arbitration_id, parse_hex_bytes(str(payload_raw)), interval_ms, format_value == "extended", fd_value, listen_value, listen_timeout, check_message)
+
+
+def build_hardware_config(params: dict[str, Any]) -> CANHardwareConfig:
+    args = build_args("hardware", HARDWARE_KEYS, params)
+    merged = dict(vars(args))
+    apply_fd_timing_preset(merged, {key for key, value in params.items() if value is not None})
+    return CANHardwareConfig(
+        interface=getattr(args, "interface", None),
+        channel=getattr(args, "channel", None),
+        bitrate=merged.get("bitrate"),
+        receive_timeout=float(merged["receive_timeout"]),
+        fd=bool(merged["fd"]),
+        data_bitrate=merged.get("data_bitrate"),
+        auto_bitrate=bool(merged["auto_bitrate"]),
+        bitrate_candidates=tuple(parse_int_list(merged["bitrate_candidates"])) if merged.get("bitrate_candidates") is not None else (),
+        data_bitrate_candidates=tuple(parse_int_list(merged["data_bitrate_candidates"])) if merged.get("data_bitrate_candidates") is not None else (),
+        bitrate_probe_timeout=float(merged["bitrate_probe_timeout"]) if merged.get("bitrate_probe_timeout") is not None else 0.0,
+        fd_timing_preset=normalize_fd_timing_preset(merged.get("fd_timing_preset")),
+        fd_clock=int(merged["fd_clock"]) if merged.get("fd_clock") is not None else 0,
+        nominal_sample_point=float(merged["nominal_sample_point"]) if merged.get("nominal_sample_point") is not None else 0.0,
+        data_sample_point=float(merged["data_sample_point"]) if merged.get("data_sample_point") is not None else 0.0,
+        check_message=bool(merged["check_message"]),
+        drop_echo=bool(merged["drop_echo"]),
+    )
+
+
+def build_fuzz_keepalive_config(args: SimpleNamespace) -> KeepaliveConfig:
+    enabled = bool(getattr(args, "keepalive", False))
+    arbitration_id, payload, interval_ms, extended, fd, listen, listen_timeout, check_message = _resolve_keepalive_values(
+        args,
+        enabled=enabled,
+    )
+    return KeepaliveConfig(
+        enabled=enabled,
+        arbitration_id=arbitration_id,
+        payload=payload,
+        interval_ms=interval_ms,
+        extended=extended,
+        fd=fd,
+        listen=listen,
+        listen_timeout=listen_timeout,
+        check_message=check_message,
+    )
+
+
+def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> SimpleNamespace:
     merged: dict[str, Any] = {}
-    if section in {"fuzz", "clean", "list", "keepalive", "fdcheck", "scan"}:
-        for key, value in raw_config.items():
-            if not isinstance(value, dict):
-                normalized_key = key.replace("-", "_")
-                if normalized_key in defaults:
-                    merged[normalized_key] = value
-    section_config = raw_config.get(section, {})
-    if isinstance(section_config, dict):
-        for key, value in section_config.items():
-            normalized_key = key.replace("-", "_")
-            if normalized_key in defaults:
-                merged[normalized_key] = value
-    return merged
+    config_path = params.get("config")
+    if config_path:
+        raw_config = read_toml_config(Path(str(config_path)))
+        if section in {"hardware", "fuzz", "fdcheck", "scan", "keepalive"}:
+            merged.update(extract_config(raw_config, HARDWARE_KEYS, "hardware"))
+        merged.update(extract_config(raw_config, allowed_keys, section))
+        if section == "fuzz":
+            protocol = normalize_protocol(params.get("protocol") or merged.get("protocol"))
+            if protocol is None:
+                raise click.ClickException("missing required config value: protocol")
+            protocol_section = FUZZ_PROTOCOL_SECTION_MAP.get(protocol)
+            if protocol_section is not None:
+                merged.update(extract_config(raw_config, allowed_keys, protocol_section))
+            merged.update(extract_keepalive_config(raw_config))
+    cli_keys = {key for key, value in params.items() if value is not None}
+    for key in cli_keys:
+        merged[key] = params[key]
+
+    if section == "hardware":
+        apply_auto_bitrate_tokens(merged)
+        apply_fd_timing_preset(merged, cli_keys)
+        required_keys = hardware_required_keys(merged)
+        _validate_required(section, merged, {key for key in required_keys if key not in {"interface", "channel"}})
+    elif section == "fuzz":
+        protocol = normalize_protocol(merged.get("protocol"))
+        if protocol is None:
+            raise click.ClickException("missing required config value: protocol")
+        merged["protocol"] = protocol
+        _validate_required(section, merged, protocol_required_keys(section, protocol))
+    elif section == "keepalive":
+        pass
+    elif section == "list":
+        _validate_required(section, merged, set())
+    elif section == "clean":
+        _validate_required(section, merged, CLEAN_KEYS)
+    elif section == "fdcheck":
+        _validate_required(section, merged, FDCHECK_KEYS)
+    elif section == "scan":
+        _validate_required(section, merged, SCAN_KEYS)
+    else:
+        _validate_required(section, merged, {key for key in allowed_keys if key != "config"})
+
+    if section != "hardware":
+        apply_auto_bitrate_tokens(merged)
+        if section == "fuzz" and "fd_timing_preset" in merged:
+            apply_fd_timing_preset(merged, cli_keys)
+    return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})
 
 
-def extract_keepalive_config(raw_config: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
-    section = raw_config.get("keepalive", {})
-    if not isinstance(section, dict):
-        return {}
-    mapping = {"enabled": "keepalive", "keepalive": "keepalive", "preset": "keepalive_preset", "arbitration_id": "keepalive_id", "id": "keepalive_id", "payload": "keepalive_payload", "interval_ms": "keepalive_interval_ms", "format": "keepalive_format", "fd": "keepalive_fd", "listen": "keepalive_listen", "listen_timeout": "keepalive_listen_timeout", "check_message": "keepalive_check_message"}
-    return {dest: section[key] for key, dest in mapping.items() if key in section and dest in defaults}
-
-
-
-
-
-
-
-
-
-
+def build_keepalive_args(params: dict[str, Any]) -> SimpleNamespace:
+    args = build_args("keepalive", KEEPALIVE_CLI_KEYS, params)
+    preset_name = normalize_keepalive_preset(getattr(args, "preset", None))
+    if preset_name is None:
+        raise click.ClickException("missing required config value: preset")
+    preset = KEEPALIVE_PRESETS[preset_name]
+    merged = dict(vars(args))
+    for key in ("arbitration_id", "payload", "interval_ms", "format", "fd", "listen", "listen_timeout", "check_message"):
+        if merged.get(key) is None:
+            merged[key] = preset[key]
+    merged["preset"] = preset_name
+    return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})

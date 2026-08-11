@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import json
@@ -11,40 +11,28 @@ from pathlib import Path
 from ..protocol.private_control import build_request
 from ..runtime.adapters import CANHardwareAdapter
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
-from ..runtime.models import CANFrame, FrameFormat, FrameType
+from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from .utils import report_progress, should_report_progress
 
 
 @dataclass(frozen=True)
 class PrivateFuzzConfig:
-    cases: int = 1000
-    seed: int = 2026
-    campaign: str = "private_control_baseline"
-    output_dir: Path = Path("result")
-    interface: str = "socketcan"
-    channel: str = "can0"
-    bitrate: int | None = 500000
-    receive_timeout: float = 0.05
-    inter_request_delay_ms: float = 10.0
-    target_ids: tuple[int, ...] = (0x100, 0x101, 0x102, 0x1F0, 0x1F1, 0x200, 0x201, 0x300, 0x301, 0x3F0)
-    opcodes: tuple[int, ...] = (0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x40, 0x41, 0x7F, 0x80, 0xFE, 0xFF)
-    structured_rate: float = 0.7
-    malformed_rate: float = 0.15
-    min_payload_len: int = 1
-    max_payload_len: int = 8
-    extended: bool = False
-    fd: bool = False
-    data_bitrate: int | None = None
-    auto_bitrate: bool = False
-    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
-    data_bitrate_candidates: tuple[int, ...] = (2000000, 5000000, 4000000, 1000000)
-    bitrate_probe_timeout: float = 0.2
-    fd_clock: int = 80000000
-    nominal_sample_point: float = 87.5
-    data_sample_point: float = 80.0
-    progress_interval: int = 100
-    progress_seconds: float = 1.0
-    keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
+    hardware: CANHardwareConfig
+    cases: int
+    seed: int
+    campaign: str
+    output_dir: Path
+    inter_request_delay_ms: float
+    target_ids: tuple[int, ...]
+    opcodes: tuple[int, ...]
+    structured_rate: float
+    malformed_rate: float
+    min_payload_len: int
+    max_payload_len: int
+    extended: bool
+    progress_interval: int
+    progress_seconds: float
+    keepalive: KeepaliveConfig
 
 
 @dataclass(frozen=True)
@@ -80,21 +68,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with CANHardwareAdapter(
-        interface=config.interface,
-        channel=config.channel,
-        bitrate=config.bitrate,
-        receive_timeout=config.receive_timeout,
-        fd=config.fd,
-        data_bitrate=config.data_bitrate,
-        auto_bitrate=config.auto_bitrate,
-        bitrate_candidates=config.bitrate_candidates,
-        data_bitrate_candidates=config.data_bitrate_candidates,
-        bitrate_probe_timeout=config.bitrate_probe_timeout,
-        fd_clock=config.fd_clock,
-        nominal_sample_point=config.nominal_sample_point,
-        data_sample_point=config.data_sample_point,
-    ) as adapter, KeepaliveSession(
+    with CANHardwareAdapter(config.hardware) as adapter, KeepaliveSession(
         adapter,
         config.keepalive,
         config.output_dir / f"{config.campaign}_keepalive.csv",
@@ -133,7 +107,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[
                     tx_dlc=frame.dlc,
                     tx_format=frame.frame_format.value,
                     tx_type=frame.frame_type.value,
-                    fd=config.fd,
+                    fd=config.hardware.fd,
                     sent=observation.sent,
                     fault=observation.fault,
                     state=observation.state,
@@ -294,9 +268,9 @@ def write_summary(
         "requested_cases": config.cases,
         "completed_cases": completed_cases,
         "seed": config.seed,
-        "interface": config.interface,
-        "channel": config.channel,
-        "bitrate": config.bitrate,
+        "interface": config.hardware.interface,
+        "channel": config.hardware.channel,
+        "bitrate": config.hardware.bitrate,
         "target_ids": [f"0x{value:x}" for value in config.target_ids],
         "opcodes": [f"0x{value:02x}" for value in config.opcodes],
         "structured_rate": config.structured_rate,
@@ -304,7 +278,7 @@ def write_summary(
         "min_payload_len": config.min_payload_len,
         "max_payload_len": config.max_payload_len,
         "extended": config.extended,
-        "fd": config.fd,
+        "fd": config.hardware.fd,
         "sent": sent,
         "faults": faults,
         "responses": responses,
@@ -317,5 +291,3 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-

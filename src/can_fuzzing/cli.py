@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import sys
@@ -7,14 +7,14 @@ from typing import Any
 import click
 
 from .config import (
-    CLEAN_DEFAULTS,
-    FDCHECK_DEFAULTS,
-    FUZZ_DEFAULTS,
-    KEEPALIVE_DEFAULTS,
+    CLEAN_KEYS,
+    FDCHECK_KEYS,
+    FUZZ_KEYS,
+    KEEPALIVE_CLI_KEYS,
     KEEPALIVE_PRESETS,
     CAN_FD_TIMING_PRESETS,
-    LIST_DEFAULTS,
-    SCAN_DEFAULTS,
+    LIST_KEYS,
+    SCAN_KEYS,
     build_args,
     build_keepalive_args,
 )
@@ -74,10 +74,6 @@ FUZZ_OPTIONS = [
     (("--protocol",), {"default": None, "help": "fuzzing protocol: can, dbc, uds, obd, or private"}),
     (("--interface",), {"default": None, "help": "python-can interface"}),
     (("--channel",), {"default": None, "help": "python-can channel"}),
-    (("--interfaces",), {"default": None, "help": "comma separated interfaces to probe during auto discovery"}),
-    (("--include-virtual/--no-include-virtual",), {"default": None, "help": "include virtual interfaces during auto discovery"}),
-    (("--json/--no-json",), {"default": None, "help": "print discovery results as JSON during auto discovery"}),
-    (("--verbose/--no-verbose",), {"default": None, "help": "show backend discovery warnings"}),
     (("--bitrate",), {"default": None, "help": "arbitration bitrate, none, or auto"}),
     (("--auto-bitrate/--no-auto-bitrate",), {"default": None, "help": "auto-detect CAN/CAN FD bitrates when bitrate values are auto or missing"}),
     (("--bitrate-candidates",), {"default": None, "help": "comma separated arbitration bitrate candidates for auto detection"}),
@@ -118,7 +114,6 @@ FUZZ_OPTIONS = [
     (("--extended/--no-extended",), {"default": None, "help": "use extended CAN identifiers"}),
     (("--progress-interval",), {"type": int, "default": None, "help": "count-based progress interval"}),
     (("--progress-seconds",), {"type": float, "default": None, "help": "time-based progress interval"}),
-    (("--no-progress/--progress",), {"default": None, "help": "compatibility flag; logs are line-based"}),
     (("--keepalive/--no-keepalive",), {"default": None, "help": "send keepalive frames during fuzzing"}),
     (("--keepalive-preset",), {"type": click.Choice(sorted(KEEPALIVE_PRESETS)), "default": None, "help": "keepalive preset"}),
     (("--keepalive-id",), {"default": None, "help": "override keepalive arbitration ID"}),
@@ -139,19 +134,19 @@ def _fuzz_click(ctx: click.Context, **params: Any) -> None:
     if click_invoked_without_options(ctx):
         click.echo(SHORT_FUZZ_HELP)
         return
-    run_fuzz_from_args(build_args("fuzz", FUZZ_DEFAULTS, params))
+    run_fuzz_from_args(build_args("fuzz", FUZZ_KEYS, params))
 
 
 @click.command(context_settings=CLICK_CONTEXT, help="Remove generated files from result directory.")
 @command_options([COMMON_CONFIG_OPTION, (("--result-dir",), {"default": None, "help": "result directory to clean"})])
 def _clean_click(**params: Any) -> None:
-    run_clean_from_args(build_args("clean", CLEAN_DEFAULTS, params))
+    run_clean_from_args(build_args("clean", CLEAN_KEYS, params))
 
 
 @click.command(context_settings=CLICK_CONTEXT, help="List available CAN interfaces detected by python-can.")
 @command_options([COMMON_CONFIG_OPTION, (("--interfaces",), {"default": None, "help": "comma separated python-can backends to probe"}), (("--include-virtual/--no-include-virtual",), {"default": None, "help": "include python-can virtual channels"}), (("--json/--no-json",), {"default": None, "help": "print raw discovery results as JSON"}), (("--verbose/--no-verbose",), {"default": None, "help": "show backend discovery warnings"})])
 def _list_click(**params: Any) -> None:
-    run_list_from_args(build_args("list", LIST_DEFAULTS, params))
+    run_list_from_args(build_args("list", LIST_KEYS, params))
 
 @click.command(context_settings=CLICK_CONTEXT, help="Send periodic keepalive frames on a real CAN device.")
 @command_options([
@@ -159,10 +154,6 @@ def _list_click(**params: Any) -> None:
     (("--preset",), {"type": click.Choice(sorted(KEEPALIVE_PRESETS)), "default": None, "help": "activation frame preset"}),
     (("--interface",), {"default": None, "help": "python-can interface"}),
     (("--channel",), {"default": None, "help": "python-can channel"}),
-    (("--interfaces",), {"default": None, "help": "comma separated interfaces to probe during auto discovery"}),
-    (("--include-virtual/--no-include-virtual",), {"default": None, "help": "include virtual interfaces during auto discovery"}),
-    (("--json/--no-json",), {"default": None, "help": "print discovery results as JSON during auto discovery"}),
-    (("--verbose/--no-verbose",), {"default": None, "help": "show backend discovery warnings"}),
     (("--bitrate",), {"default": None, "help": "arbitration bitrate, none, or auto"}),
     (("--auto-bitrate/--no-auto-bitrate",), {"default": None, "help": "auto-detect CAN/CAN FD bitrates when bitrate values are auto or missing"}),
     (("--bitrate-candidates",), {"default": None, "help": "comma separated arbitration bitrate candidates for auto detection"}),
@@ -191,10 +182,6 @@ def _keepalive_click(**params: Any) -> None:
     COMMON_CONFIG_OPTION,
     (("--interface",), {"default": None, "help": "python-can interface"}),
     (("--channel",), {"default": None, "help": "python-can channel"}),
-    (("--interfaces",), {"default": None, "help": "comma separated interfaces to probe during auto discovery"}),
-    (("--include-virtual/--no-include-virtual",), {"default": None, "help": "include virtual interfaces during auto discovery"}),
-    (("--json/--no-json",), {"default": None, "help": "print discovery results as JSON during auto discovery"}),
-    (("--verbose/--no-verbose",), {"default": None, "help": "show backend discovery warnings"}),
     (("--bitrate",), {"default": None, "help": "arbitration bitrate, none, or auto"}),
     (("--auto-bitrate/--no-auto-bitrate",), {"default": None, "help": "auto-detect CAN/CAN FD bitrates when bitrate values are auto or missing"}),
     (("--bitrate-candidates",), {"default": None, "help": "comma separated arbitration bitrate candidates for auto detection"}),
@@ -209,10 +196,9 @@ def _keepalive_click(**params: Any) -> None:
     (("--output-dir",), {"default": None, "help": "directory for CSV and JSON results"}),
     (("--probe-timeout",), {"type": float, "default": None, "help": "seconds to wait after each FD probe"}),
     (("--probe-delay-ms",), {"type": float, "default": None, "help": "delay between FD probes"}),
-    (("--no-progress/--progress",), {"default": None, "help": "compatibility flag; logs are line-based"}),
 ])
 def _fdcheck_click(**params: Any) -> None:
-    run_fdcheck_from_args(build_args("fdcheck", FDCHECK_DEFAULTS, params))
+    run_fdcheck_from_args(build_args("fdcheck", FDCHECK_KEYS, params))
 
 
 @click.command(context_settings=CLICK_CONTEXT, help="Scan devices and message IDs on a real CAN bus.")
@@ -220,10 +206,6 @@ def _fdcheck_click(**params: Any) -> None:
     COMMON_CONFIG_OPTION,
     (("--interface",), {"default": None, "help": "python-can interface"}),
     (("--channel",), {"default": None, "help": "python-can channel"}),
-    (("--interfaces",), {"default": None, "help": "comma separated interfaces to probe during auto discovery"}),
-    (("--include-virtual/--no-include-virtual",), {"default": None, "help": "include virtual interfaces during auto discovery"}),
-    (("--json/--no-json",), {"default": None, "help": "print discovery results as JSON during auto discovery"}),
-    (("--verbose/--no-verbose",), {"default": None, "help": "show backend discovery warnings"}),
     (("--bitrate",), {"default": None, "help": "arbitration bitrate, none, or auto"}),
     (("--auto-bitrate/--no-auto-bitrate",), {"default": None, "help": "auto-detect CAN/CAN FD bitrates when bitrate values are auto or missing"}),
     (("--bitrate-candidates",), {"default": None, "help": "comma separated arbitration bitrate candidates for auto detection"}),
@@ -244,10 +226,9 @@ def _fdcheck_click(**params: Any) -> None:
     (("--data-sample-point",), {"type": float, "default": None, "help": "data-phase sample point percent"}),
     (("--passive-only/--no-passive-only",), {"default": None, "help": "run passive listening only"}),
     (("--active-only/--no-active-only",), {"default": None, "help": "run active probing only"}),
-    (("--no-progress/--progress",), {"default": None, "help": "compatibility flag; logs are line-based"}),
 ])
 def _scan_click(**params: Any) -> None:
-    run_scan_from_args(build_args("scan", SCAN_DEFAULTS, params))
+    run_scan_from_args(build_args("scan", SCAN_KEYS, params))
 
 
 def fuzz_main() -> None:
@@ -272,13 +253,3 @@ def fdcheck_main() -> None:
 
 def scan_main() -> None:
     invoke_click(_scan_click, "scan")
-
-
-
-
-
-
-
-
-
-

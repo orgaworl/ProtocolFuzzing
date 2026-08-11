@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -8,7 +8,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from can_fuzzing.runtime.adapters import CANHardwareAdapter
-from can_fuzzing.runtime.models import CANFrame, FrameFormat, FrameType
+from can_fuzzing.runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 
 
 class DummyMessage:
@@ -77,6 +77,28 @@ class AdapterEchoTests(unittest.TestCase):
         install_fake_can_module()
 
 
+def build_hardware_config(**overrides) -> CANHardwareConfig:
+    config = dict(
+        interface='pcan',
+        channel='PCAN_USBBUS1',
+        bitrate=500000,
+        receive_timeout=0.001,
+        fd=False,
+        data_bitrate=None,
+        auto_bitrate=False,
+        bitrate_candidates=(),
+        data_bitrate_candidates=(),
+        bitrate_probe_timeout=0.0,
+        fd_timing_preset=None,
+        fd_clock=0,
+        nominal_sample_point=0.0,
+        data_sample_point=0.0,
+        check_message=True,
+        drop_echo=True,
+    )
+    config.update(overrides)
+    return CANHardwareConfig(**config)
+
     def test_auto_bitrate_selects_candidate_with_observed_traffic(self) -> None:
         opened: list[dict] = []
 
@@ -90,12 +112,7 @@ class AdapterEchoTests(unittest.TestCase):
 
         install_fake_can_module(bus_factory)
         adapter = CANHardwareAdapter(
-            'pcan',
-            'PCAN_USBBUS1',
-            bitrate=None,
-            auto_bitrate=True,
-            bitrate_candidates=(125000, 500000),
-            bitrate_probe_timeout=0.001,
+            build_hardware_config(bitrate=None, auto_bitrate=True, bitrate_candidates=(125000, 500000), bitrate_probe_timeout=0.001)
         )
 
         with adapter:
@@ -105,7 +122,9 @@ class AdapterEchoTests(unittest.TestCase):
         self.assertEqual([item.get('bitrate') for item in opened], [125000, 500000])
 
     def test_transact_drops_echo_message(self) -> None:
-        adapter = CANHardwareAdapter('pcan', 'PCAN_USBBUS1', receive_timeout=0.001, drop_echo=True)
+        adapter = CANHardwareAdapter(
+            build_hardware_config(receive_timeout=0.001, drop_echo=True)
+        )
         echo = DummyMessage(0x7DF, b'\x02\x3e\x00\x00\x00\x00\x00\x00')
         response = DummyMessage(0x7E8, b'\x03\x7f\x3e\x11\x00\x00\x00\x00')
         adapter._bus = DummyBus([echo, response])
@@ -120,7 +139,9 @@ class AdapterEchoTests(unittest.TestCase):
         self.assertEqual(observation.response_payloads, ['037f3e1100000000'])
 
     def test_transact_can_keep_echo_when_disabled(self) -> None:
-        adapter = CANHardwareAdapter('pcan', 'PCAN_USBBUS1', receive_timeout=0.001, drop_echo=False)
+        adapter = CANHardwareAdapter(
+            build_hardware_config(receive_timeout=0.001, drop_echo=False)
+        )
         echo = DummyMessage(0x7DF, b'\x02\x3e\x00\x00\x00\x00\x00\x00')
         adapter._bus = DummyBus([echo])
 

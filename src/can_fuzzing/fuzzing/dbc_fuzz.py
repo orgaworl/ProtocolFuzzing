@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import json
@@ -13,34 +13,22 @@ from ..runtime.adapters import CANHardwareAdapter
 from ..log import warning
 from .utils import report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
-from ..runtime.models import CANFrame, FrameFormat, FrameType
+from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..protocol.dbc import DBCDatabase, DBCMessage, DBCSignal, coerce_number, load_dbc_database
 
 
 @dataclass(frozen=True)
 class DBCFuzzConfig:
+    hardware: CANHardwareConfig
     dbc_file: Path
-    cases: int = 1000
-    seed: int = 1337
-    campaign: str = "dbc_baseline"
-    output_dir: Path = Path("result")
-    interface: str = "socketcan"
-    channel: str = "can0"
-    bitrate: int | None = 500000
-    receive_timeout: float = 0.05
-    inter_frame_delay_ms: float = 5.0
-    fd: bool = False
-    data_bitrate: int | None = None
-    auto_bitrate: bool = False
-    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
-    data_bitrate_candidates: tuple[int, ...] = (2000000, 5000000, 4000000, 1000000)
-    bitrate_probe_timeout: float = 0.2
-    fd_clock: int = 80000000
-    nominal_sample_point: float = 87.5
-    data_sample_point: float = 80.0
-    progress_interval: int = 100
-    progress_seconds: float = 1.0
-    keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
+    cases: int
+    seed: int
+    campaign: str
+    output_dir: Path
+    inter_frame_delay_ms: float
+    progress_interval: int
+    progress_seconds: float
+    keepalive: KeepaliveConfig
 
 
 @dataclass(frozen=True)
@@ -70,7 +58,7 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: Callable[[dict], N
     csv_path = config.output_dir / f"{config.campaign}_cases.csv"
     summary_path = config.output_dir / f"{config.campaign}_summary.json"
 
-    use_fd = config.fd or database.requires_fd
+    use_fd = config.hardware.fd or database.requires_fd
     sent = 0
     faults = 0
     responses = 0
@@ -82,24 +70,10 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: Callable[[dict], N
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    if database.requires_fd and not config.fd:
+    if database.requires_fd and not config.hardware.fd:
         warning("DBC file contains frames larger than 8 bytes; enabling CAN FD automatically")
 
-    with CANHardwareAdapter(
-        interface=config.interface,
-        channel=config.channel,
-        bitrate=config.bitrate,
-        receive_timeout=config.receive_timeout,
-        fd=use_fd,
-        data_bitrate=config.data_bitrate,
-        auto_bitrate=config.auto_bitrate,
-        bitrate_candidates=config.bitrate_candidates,
-        data_bitrate_candidates=config.data_bitrate_candidates,
-        bitrate_probe_timeout=config.bitrate_probe_timeout,
-        fd_clock=config.fd_clock,
-        nominal_sample_point=config.nominal_sample_point,
-        data_sample_point=config.data_sample_point,
-    ) as adapter, KeepaliveSession(
+    with CANHardwareAdapter(config.hardware) as adapter, KeepaliveSession(
         adapter,
         config.keepalive,
         config.output_dir / f"{config.campaign}_keepalive.csv",
@@ -336,10 +310,10 @@ def write_summary(
         "requested_cases": config.cases,
         "completed_cases": completed_cases,
         "seed": config.seed,
-        "interface": config.interface,
-        "channel": config.channel,
-        "bitrate": config.bitrate,
-        "fd": config.fd or database.requires_fd,
+        "interface": config.hardware.interface,
+        "channel": config.hardware.channel,
+        "bitrate": config.hardware.bitrate,
+        "fd": config.hardware.fd or database.requires_fd,
         "sent": sent,
         "faults": faults,
         "responses": responses,
@@ -444,6 +418,3 @@ def dedupe(values: list[int | float]) -> list[int | float]:
         seen.add(key)
         result.append(value)
     return result
-
-
-

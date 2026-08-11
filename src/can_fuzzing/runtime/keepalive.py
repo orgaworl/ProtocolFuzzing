@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import threading
 import time
@@ -13,15 +13,15 @@ from .models import CANFrame, FrameFormat, FrameType
 
 @dataclass(frozen=True)
 class KeepaliveConfig:
-    enabled: bool = False
-    arbitration_id: int = 0x7DF
-    payload: bytes = b"\x02\x3E\x00"
-    interval_ms: float = 500.0
-    extended: bool = False
-    fd: bool = False
-    listen: bool = True
-    listen_timeout: float = 0.05
-    check_message: bool = True
+    enabled: bool
+    arbitration_id: int
+    payload: bytes
+    interval_ms: float
+    extended: bool
+    fd: bool
+    listen: bool
+    listen_timeout: float
+    check_message: bool
 
 
 @dataclass(frozen=True)

@@ -36,7 +36,7 @@ def build_request(rng: random.Random, config) -> UDSRequest:
     malformed = rng.random() < config.malformed_rate
 
     if malformed:
-        service_id = rng.choice(UDS_SERVICE_POOL + (rng.randrange(0x00, 0x100),))
+        service_id = rng.choice(list(UDS_SERVICE_POOL) + [rng.randrange(0x00, 0x100)])
         payload = build_malformed_payload(rng, service_id)
         return UDSRequest(
             request_id=request_id,

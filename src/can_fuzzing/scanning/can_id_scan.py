@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import json
@@ -8,32 +8,21 @@ from pathlib import Path
 from typing import Any
 
 from ..runtime.adapters import CANHardwareAdapter
-from ..runtime.models import CANFrame, FrameFormat, FrameType
+from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 
 
 @dataclass(frozen=True)
 class ScanConfig:
-    interface: str
-    channel: str
-    bitrate: int | None = 500000
-    output_dir: Path = Path("result")
-    campaign: str = "can_scan"
-    passive_duration: float = 10.0
-    active_timeout: float = 0.25
-    inter_probe_delay_ms: float = 50.0
-    fd: bool = False
-    data_bitrate: int | None = None
-    auto_bitrate: bool = False
-    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
-    data_bitrate_candidates: tuple[int, ...] = (2000000, 5000000, 4000000, 1000000)
-    bitrate_probe_timeout: float = 0.2
-    fd_clock: int = 80000000
-    nominal_sample_point: float = 87.5
-    data_sample_point: float = 80.0
-    active: bool = True
-    passive: bool = True
-    physical_start: int = 0x7E0
-    physical_end: int = 0x7E7
+    hardware: CANHardwareConfig
+    output_dir: Path
+    campaign: str
+    passive_duration: float
+    active_timeout: float
+    inter_probe_delay_ms: float
+    active: bool
+    passive: bool
+    physical_start: int
+    physical_end: int
 
 
 @dataclass
@@ -65,21 +54,7 @@ def run_scan(config: ScanConfig, progress_callback=None) -> dict[str, Any]:
     active_rows: list[dict[str, Any]] = []
     interrupted = False
 
-    with CANHardwareAdapter(
-        interface=config.interface,
-        channel=config.channel,
-        bitrate=config.bitrate,
-        receive_timeout=config.active_timeout,
-        fd=config.fd,
-        data_bitrate=config.data_bitrate,
-        auto_bitrate=config.auto_bitrate,
-        bitrate_candidates=config.bitrate_candidates,
-        data_bitrate_candidates=config.data_bitrate_candidates,
-        bitrate_probe_timeout=config.bitrate_probe_timeout,
-        fd_clock=config.fd_clock,
-        nominal_sample_point=config.nominal_sample_point,
-        data_sample_point=config.data_sample_point,
-    ) as adapter:
+    with CANHardwareAdapter(config.hardware) as adapter:
         try:
             adapter.drain_pending()
             passive_signatures: set[tuple[int, str, int, bool]] = set()
@@ -174,7 +149,7 @@ def active_scan(
             tx_dlc=probe.dlc,
             tx_format=probe.frame_format.value,
             tx_type=probe.frame_type.value,
-            fd=config.fd,
+            fd=config.hardware.fd,
             sent=row["error"] == "",
             fault=bool(row["error"]),
             state="response" if row["response_count"] else "send_error" if row["error"] else "no_response",
@@ -297,9 +272,9 @@ def build_summary(
         "campaign": config.campaign,
         "status": "interrupted" if interrupted else "completed",
         "interrupted": interrupted,
-        "interface": config.interface,
-        "channel": config.channel,
-        "bitrate": config.bitrate,
+        "interface": config.hardware.interface,
+        "channel": config.hardware.channel,
+        "bitrate": config.hardware.bitrate,
         "passive_enabled": config.passive,
         "active_enabled": config.active,
         "passive_duration": config.passive_duration,
@@ -329,8 +304,3 @@ def build_summary(
 def report(progress_callback, **snapshot) -> None:
     if progress_callback is not None:
         progress_callback(snapshot)
-
-
-
-
-

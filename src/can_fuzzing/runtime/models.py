@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
@@ -14,6 +14,26 @@ class FrameType(str, Enum):
     DATA = "data"
     REMOTE = "remote"
     ERROR = "error"
+
+
+@dataclass(frozen=True)
+class CANHardwareConfig:
+    interface: str | None
+    channel: str | None
+    bitrate: int | None
+    receive_timeout: float
+    fd: bool
+    data_bitrate: int | None
+    auto_bitrate: bool
+    bitrate_candidates: tuple[int, ...]
+    data_bitrate_candidates: tuple[int, ...]
+    bitrate_probe_timeout: float
+    fd_timing_preset: str | None
+    fd_clock: int
+    nominal_sample_point: float
+    data_sample_point: float
+    check_message: bool
+    drop_echo: bool
 
 
 @dataclass(frozen=True)

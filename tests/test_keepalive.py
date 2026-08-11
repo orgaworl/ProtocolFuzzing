@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import contextlib
 import sys
 import time
-import contextlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -44,8 +44,17 @@ class DummyAdapter:
 
 
 class KeepaliveTests(unittest.TestCase):
-    def test_keepalive_preset_from_cli(self) -> None:
-        args = cli_config.build_keepalive_args({"preset": "ff-classic-response"})
+    def test_keepalive_config_from_cli(self) -> None:
+        args = cli_config.build_keepalive_args({
+            "preset": "ff-classic-response",
+            "arbitration_id": 0xFFFFFFFF,
+            "payload": "FF FF FF FF FF FF FF FF",
+            "interval_ms": 500.0,
+            "format": "extended",
+            "listen": True,
+            "listen_timeout": 0.05,
+            "check_message": False,
+        })
         self.assertEqual(args.arbitration_id, 0xFFFFFFFF)
         self.assertEqual(args.payload, "FF FF FF FF FF FF FF FF")
         self.assertEqual(args.format, "extended")
@@ -53,11 +62,11 @@ class KeepaliveTests(unittest.TestCase):
         self.assertTrue(args.listen)
         self.assertFalse(args.check_message)
 
-    def test_keepalive_preset_from_config(self) -> None:
+    def test_keepalive_config_from_config(self) -> None:
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[keepalive]\npreset = "ff-fd-no-response"\n',
+                '[keepalive]\npreset = "ff-fd-no-response"\narbitration_id = 0xFFFFFFFF\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 500.0\nformat = "extended"\nlisten = false\nlisten_timeout = 0.05\ncheck_message = false\n',
                 encoding="utf-8",
                 newline="\n",
             )
@@ -94,7 +103,17 @@ class KeepaliveTests(unittest.TestCase):
     def test_keepalive_session_writes_response_csv(self) -> None:
         events: list[dict] = []
         adapter = DummyAdapter()
-        config = KeepaliveConfig(enabled=True, listen_timeout=0.001, interval_ms=1000.0)
+        config = KeepaliveConfig(
+            enabled=True,
+            arbitration_id=0x7DF,
+            payload=b"\x02\x3E\x00",
+            interval_ms=1000.0,
+            extended=False,
+            fd=False,
+            listen=True,
+            listen_timeout=0.001,
+            check_message=True,
+        )
         with TemporaryDirectory() as tmpdir:
             csv_path = Path(tmpdir) / "keepalive.csv"
             with KeepaliveSession(adapter, config, csv_path, events.append):
@@ -108,9 +127,3 @@ class KeepaliveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-
-
-
-

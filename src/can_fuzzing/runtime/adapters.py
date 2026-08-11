@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import contextlib
 import io
@@ -14,52 +14,33 @@ from .errors import (
     build_os_error_message,
     build_unknown_channel_message,
 )
-from .models import CANFrame, FrameType, HardwareObservation
+from .models import CANFrame, CANHardwareConfig, FrameType, HardwareObservation
 from .timing import build_fd_timing
 
-DEFAULT_CAN_BITRATE_CANDIDATES = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
-DEFAULT_CAN_FD_DATA_BITRATE_CANDIDATES = (2000000, 5000000, 4000000, 1000000)
 
 
 class CANHardwareAdapter:
-    def __init__(
-        self,
-        interface: str,
-        channel: str,
-        bitrate: int | None = None,
-        receive_timeout: float = 0.05,
-        fd: bool = False,
-        data_bitrate: int | None = None,
-        fd_clock: int = 80000000,
-        nominal_sample_point: float = 87.5,
-        data_sample_point: float = 80.0,
-        auto_bitrate: bool = False,
-        bitrate_candidates: Iterable[int] | None = None,
-        data_bitrate_candidates: Iterable[int] | None = None,
-        bitrate_probe_timeout: float = 0.2,
-        timing: Any | None = None,
-        check_message: bool = True,
-        drop_echo: bool = True,
-    ) -> None:
-        self.interface = interface
-        self.channel = channel
-        self.bitrate = bitrate
-        self.receive_timeout = receive_timeout
-        self.fd = fd
-        self.data_bitrate = data_bitrate
-        self.fd_clock = fd_clock
-        self.nominal_sample_point = nominal_sample_point
-        self.data_sample_point = data_sample_point
-        self.auto_bitrate = auto_bitrate
-        self.bitrate_candidates = tuple(bitrate_candidates or DEFAULT_CAN_BITRATE_CANDIDATES)
-        self.data_bitrate_candidates = tuple(data_bitrate_candidates or DEFAULT_CAN_FD_DATA_BITRATE_CANDIDATES)
-        self.bitrate_probe_timeout = bitrate_probe_timeout
+    def __init__(self, hardware: CANHardwareConfig, timing: Any | None = None) -> None:
+        self.hardware = hardware
+        self.interface = hardware.interface
+        self.channel = hardware.channel
+        self.bitrate = hardware.bitrate
+        self.receive_timeout = hardware.receive_timeout
+        self.fd = hardware.fd
+        self.data_bitrate = hardware.data_bitrate
+        self.fd_clock = hardware.fd_clock
+        self.nominal_sample_point = hardware.nominal_sample_point
+        self.data_sample_point = hardware.data_sample_point
+        self.auto_bitrate = hardware.auto_bitrate
+        self.bitrate_candidates = hardware.bitrate_candidates
+        self.data_bitrate_candidates = hardware.data_bitrate_candidates
+        self.bitrate_probe_timeout = hardware.bitrate_probe_timeout
         self.detected_bitrate: int | None = None
         self.detected_data_bitrate: int | None = None
         self.auto_bitrate_status = "disabled"
         self.timing = timing
-        self.check_message = check_message
-        self.drop_echo = drop_echo
+        self.check_message = hardware.check_message
+        self.drop_echo = hardware.drop_echo
         self._bus: Any = None
         self._pending_messages: list[Any] = []
         self._io_lock = threading.RLock()

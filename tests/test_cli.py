@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -14,13 +14,41 @@ from unittest.mock import patch
 from can_fuzzing import cli
 from can_fuzzing import config as cli_config, commands, log
 
+BASE_HW = {
+    "bitrate": 500000,
+    "receive_timeout": 0.05,
+    "fd": False,
+    "data_bitrate": 2000000,
+    "auto_bitrate": False,
+    "bitrate_candidates": "500000,250000,125000,1000000,800000,100000,50000",
+    "data_bitrate_candidates": "2000000,5000000,4000000,1000000",
+    "bitrate_probe_timeout": 0.2,
+    "fd_timing_preset": "sae-j2284",
+    "fd_clock": 80000000,
+    "nominal_sample_point": 87.5,
+    "data_sample_point": 80.0,
+    "check_message": True,
+    "drop_echo": True,
+}
+
+BASE_KEEPALIVE = {
+    "preset": "tester-present",
+    "arbitration_id": 0x7DF,
+    "payload": "02 3E 00",
+    "interval_ms": 500.0,
+    "format": "standard",
+    "listen": True,
+    "listen_timeout": 0.05,
+    "check_message": True,
+}
+
 
 class CliTests(unittest.TestCase):
     def test_list_click_defaults_allow_missing_interface_and_channel(self) -> None:
         captured: list[SimpleNamespace] = []
         runner = CliRunner()
         with patch.object(cli, "run_list_from_args", lambda args: captured.append(args)):
-            result = runner.invoke(cli._list_click, [], catch_exceptions=False)
+            result = runner.invoke(cli._list_click, ["-c", str(Path(__file__).resolve().parents[1] / "config.toml")], catch_exceptions=False)
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(captured[0].interfaces, ",".join(cli_config.DEFAULT_DISCOVERY_INTERFACES))
         self.assertFalse(captured[0].include_virtual)
@@ -35,21 +63,13 @@ class CliTests(unittest.TestCase):
 
 
     def test_bitrate_auto_token_enables_auto_detection(self) -> None:
-        args = cli_config.build_args(
-            "fuzz",
-            cli_config.FUZZ_DEFAULTS,
-            {"bitrate": "auto", "bitrate_candidates": "125000,500000"},
-        )
+        args = cli_config.build_hardware_config(BASE_HW | {"bitrate": "auto", "bitrate_candidates": "125000,500000"})
         self.assertIsNone(args.bitrate)
         self.assertTrue(args.auto_bitrate)
-        self.assertEqual(args.bitrate_candidates, "125000,500000")
+        self.assertEqual(args.bitrate_candidates, (125000, 500000))
 
     def test_fd_timing_preset_sets_j2284_5_values(self) -> None:
-        args = cli_config.build_args(
-            "fdcheck",
-            cli_config.FDCHECK_DEFAULTS,
-            {"fd_timing_preset": "sae-j2284-5"},
-        )
+        args = cli_config.build_hardware_config(BASE_HW | {"data_bitrate": None, "fd": True, "fd_timing_preset": "sae-j2284-5"})
         self.assertEqual(args.fd_timing_preset, "sae-j2284-5")
         self.assertEqual(args.bitrate, 500000)
         self.assertEqual(args.data_bitrate, 5000000)
@@ -58,21 +78,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.data_sample_point, 80.0)
 
     def test_fd_timing_preset_keeps_cli_bitrate_override(self) -> None:
-        args = cli_config.build_args(
-            "fdcheck",
-            cli_config.FDCHECK_DEFAULTS,
-            {"fd_timing_preset": "sae-j2284-5", "data_bitrate": "2000000"},
-        )
+        args = cli_config.build_hardware_config(BASE_HW | {"fd": True, "fd_timing_preset": "sae-j2284-5", "data_bitrate": "2000000"})
         self.assertEqual(args.fd_timing_preset, "sae-j2284-5")
         self.assertEqual(args.bitrate, 500000)
         self.assertEqual(args.data_bitrate, 2000000)
 
     def test_fd_timing_preset_aliases_are_normalized(self) -> None:
-        args = cli_config.build_args(
-            "fuzz",
-            cli_config.FUZZ_DEFAULTS,
-            {"fd_timing_preset": "500k/5m"},
-        )
+        args = cli_config.build_hardware_config(BASE_HW | {"data_bitrate": None, "fd": True, "fd_timing_preset": "500k/5m"})
         self.assertEqual(args.fd_timing_preset, "sae-j2284-5")
         self.assertEqual(args.bitrate, 500000)
         self.assertEqual(args.data_bitrate, 5000000)
@@ -104,11 +116,11 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nkeepalive = true\n\n[keepalive]\npreset = "ff-classic-response"\ninterval_ms = 250.0\n',
+                '[fuzz]\nprotocol = "can"\nkeepalive = true\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "can_baseline"\ninter_frame_delay_ms = 5.0\nid_min = 0x000\nid_max = 0x7ff\ndiagnostic_bias = 0.6\nextended_probability = 0.0\ninclude_remote = false\ninclude_error = false\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[keepalive]\npreset = "ff-classic-response"\narbitration_id = 0xFFFFFFFF\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 250.0\nformat = "extended"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = false\n',
                 encoding="utf-8",
                 newline="\n",
             )
-            args = cli_config.build_args("fuzz", cli_config.FUZZ_DEFAULTS, {"config": str(config_path)})
+            args = cli_config.build_args("fuzz", cli_config.FUZZ_KEYS, {"config": str(config_path)})
         config = cli_config.build_fuzz_keepalive_config(args)
         self.assertTrue(config.enabled)
         self.assertEqual(args.keepalive_preset, "ff-classic-response")
@@ -116,24 +128,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(config.interval_ms, 250.0)
 
     def test_keepalive_click_defaults_allow_missing_interface_and_channel(self) -> None:
-        args = cli_config.build_keepalive_args({})
-        self.assertIsNone(args.interface)
-        self.assertIsNone(args.channel)
+        args = cli_config.build_keepalive_args(BASE_KEEPALIVE)
         self.assertEqual(args.arbitration_id, 0x7DF)
         self.assertEqual(args.payload, "02 3E 00")
+        hardware = cli_config.build_hardware_config(BASE_HW)
+        self.assertEqual(hardware.bitrate, 500000)
 
     def test_keepalive_config_ignores_unrelated_root_output_dir(self) -> None:
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                'bitrate = 500000\noutput_dir = "result"\n\n[keepalive]\ninterval_ms = 250.0\nformat = "extended"\n',
+                'bitrate = 500000\nreceive_timeout = 0.05\nfd = false\ndata_bitrate = 2000000\nauto_bitrate = false\nbitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]\ndata_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]\nbitrate_probe_timeout = 0.2\nfd_timing_preset = "sae-j2284"\nfd_clock = 80000000\nnominal_sample_point = 87.5\ndata_sample_point = 80.0\ncheck_message = true\ndrop_echo = true\n\n[keepalive]\npreset = "tester-present"\narbitration_id = 0x7DF\npayload = "02 3E 00"\ninterval_ms = 250.0\nformat = "extended"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = true\n',
                 encoding="utf-8",
                 newline="\n",
             )
             args = cli_config.build_keepalive_args({"config": str(config_path)})
-        self.assertEqual(args.bitrate, 500000)
-        self.assertEqual(args.interval_ms, 250.0)
-        self.assertEqual(args.format, "extended")
+            hardware = cli_config.build_hardware_config({"config": str(config_path)})
+            self.assertEqual(hardware.bitrate, 500000)
+            self.assertEqual(args.interval_ms, 250.0)
+            self.assertEqual(args.format, "extended")
 
     def test_payload_log_format_uses_fixed_eight_byte_width(self) -> None:
         self.assertEqual(log.format_hex_payload("02 3E 00"), "02 3E 00               ")
@@ -207,7 +220,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "dbc"\ninterface = "pcan"\nchannel = "PCAN_USBBUS1"\ncases = 12\n\n[dbcfuzz]\ncases = 33\ndbc_file = "from_config.dbc"\n',
+                '[fuzz]\nprotocol = "dbc"\ninterface = "pcan"\nchannel = "PCAN_USBBUS1"\noutput_dir = "result"\ncases = 12\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\ncases = 33\ndbc_file = "from_config.dbc"\n',
                 encoding="utf-8",
                 newline="\n",
             )
@@ -219,7 +232,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(captured[0].protocol, "dbc")
         self.assertEqual(captured[0].cases, 9)
         self.assertEqual(captured[0].dbc_file, "from_cli.dbc")
-        self.assertEqual(captured[0].interface, "pcan")
+        self.assertFalse(hasattr(captured[0], "interface"))
 
     def test_resolve_interface_auto_selects_single_detection(self) -> None:
         args = SimpleNamespace(interfaces=None, include_virtual=False, verbose=False, json=False)
@@ -252,7 +265,7 @@ class CliTests(unittest.TestCase):
             dbc_path.write_text('VERSION ""\nBO_ 256 Demo: 8 Vector__XXX\n SG_ Value : 0|8@1+ (1,0) [0|255] "" Vector__XXX\n', encoding="utf-8", newline="\n")
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "dbc"\ndbc_file = "' + str(dbc_path).replace('\\', '\\\\') + '"\n\n[dbcfuzz]\ncases = 7\n',
+                '[fuzz]\nprotocol = "dbc"\ndbc_file = "' + str(dbc_path).replace('\\', '\\\\') + '"\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\ncases = 7\n',
                 encoding="utf-8",
                 newline="\n",
             )

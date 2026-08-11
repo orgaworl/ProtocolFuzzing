@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import json
@@ -12,7 +12,7 @@ from ..runtime.adapters import CANHardwareAdapter
 from .utils import report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
 from ..protocol.dictionary import COMMON_CAN_IDS, COMMON_CLASSIC_LENGTHS, COMMON_DIAGNOSTIC_TEMPLATES, COMMON_DIAGNOSTIC_TEMPLATES_FD, COMMON_FD_LENGTHS
-from ..runtime.models import CANFrame, FrameFormat, FrameType
+from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 
 DIAGNOSTIC_IDS = COMMON_CAN_IDS
 
@@ -30,33 +30,21 @@ class CANFuzzingStrategyConfig:
 
 @dataclass(frozen=True)
 class FuzzConfig:
-    cases: int = 1000
-    seed: int = 1337
-    campaign: str = "can_baseline"
-    output_dir: Path = Path("result")
-    interface: str = "socketcan"
-    channel: str = "can0"
-    bitrate: int | None = 500000
-    receive_timeout: float = 0.05
-    inter_frame_delay_ms: float = 5.0
-    fd: bool = False
-    data_bitrate: int | None = None
-    auto_bitrate: bool = False
-    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
-    data_bitrate_candidates: tuple[int, ...] = (2000000, 5000000, 4000000, 1000000)
-    bitrate_probe_timeout: float = 0.2
-    fd_clock: int = 80000000
-    nominal_sample_point: float = 87.5
-    data_sample_point: float = 80.0
-    id_min: int = 0x000
-    id_max: int = 0x7FF
-    diagnostic_bias: float = 0.6
-    extended_probability: float = 0.0
-    include_remote: bool = False
-    include_error: bool = False
-    progress_interval: int = 100
-    progress_seconds: float = 1.0
-    keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
+    hardware: CANHardwareConfig
+    cases: int
+    seed: int
+    campaign: str
+    output_dir: Path
+    inter_frame_delay_ms: float
+    id_min: int
+    id_max: int
+    diagnostic_bias: float
+    extended_probability: float
+    include_remote: bool
+    include_error: bool
+    progress_interval: int
+    progress_seconds: float
+    keepalive: KeepaliveConfig
 
 
 @dataclass(frozen=True)
@@ -90,21 +78,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with CANHardwareAdapter(
-        interface=config.interface,
-        channel=config.channel,
-        bitrate=config.bitrate,
-        receive_timeout=config.receive_timeout,
-        fd=config.fd,
-        data_bitrate=config.data_bitrate,
-        auto_bitrate=config.auto_bitrate,
-        bitrate_candidates=config.bitrate_candidates,
-        data_bitrate_candidates=config.data_bitrate_candidates,
-        bitrate_probe_timeout=config.bitrate_probe_timeout,
-        fd_clock=config.fd_clock,
-        nominal_sample_point=config.nominal_sample_point,
-        data_sample_point=config.data_sample_point,
-    ) as adapter, KeepaliveSession(
+    with CANHardwareAdapter(config.hardware) as adapter, KeepaliveSession(
         adapter,
         config.keepalive,
         config.output_dir / f"{config.campaign}_keepalive.csv",
@@ -137,7 +111,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | 
                     tx_dlc=frame.dlc,
                     tx_format=frame.frame_format.value,
                     tx_type=frame.frame_type.value,
-                    fd=config.fd,
+                    fd=config.hardware.fd,
                     sent=observation.sent,
                     fault=observation.fault,
                     state=observation.state,
@@ -280,12 +254,12 @@ def choose_identifier(rng: random.Random, frame_format: FrameFormat, config: CAN
 
 def choose_payload(rng: random.Random, identifier: int, config: CANFuzzingStrategyConfig) -> bytes:
     if identifier in DIAGNOSTIC_IDS and rng.random() < 0.75:
-        templates = COMMON_DIAGNOSTIC_TEMPLATES_FD if config.fd else COMMON_DIAGNOSTIC_TEMPLATES
+        templates = COMMON_DIAGNOSTIC_TEMPLATES_FD if config.hardware.fd else COMMON_DIAGNOSTIC_TEMPLATES
         data = rng.choice(templates)
         return bytes(pad_classic_payload(list(data), rng))
 
-    max_len = 64 if config.fd else 8
-    lengths = COMMON_FD_LENGTHS if config.fd else COMMON_CLASSIC_LENGTHS
+    max_len = 64 if config.hardware.fd else 8
+    lengths = COMMON_FD_LENGTHS if config.hardware.fd else COMMON_CLASSIC_LENGTHS
     interesting_lengths = [value for value in lengths if value <= max_len]
     length = rng.choice(interesting_lengths)
     return bytes(rng.randrange(256) for _ in range(length))
@@ -363,10 +337,10 @@ def write_summary(
         "requested_cases": config.cases,
         "completed_cases": completed_cases,
         "seed": config.seed,
-        "interface": config.interface,
-        "channel": config.channel,
-        "bitrate": config.bitrate,
-        "fd": config.fd,
+        "interface": config.hardware.interface,
+        "channel": config.hardware.channel,
+        "bitrate": config.hardware.bitrate,
+        "fd": config.hardware.fd,
         "sent": sent,
         "faults": faults,
         "responses": responses,
@@ -378,9 +352,3 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-
-
-
-
-

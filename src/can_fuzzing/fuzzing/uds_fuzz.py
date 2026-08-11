@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import json
@@ -12,33 +12,27 @@ from ..protocol.isotp import encode_isotp_single_frame
 from ..protocol.uds import build_request, summarize_responses
 from ..runtime.adapters import CANHardwareAdapter
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
-from ..runtime.models import CANFrame, FrameFormat, FrameType
+from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from .utils import report_progress, should_report_progress
 
 
 @dataclass(frozen=True)
 class UDSFuzzConfig:
-    cases: int = 1000
-    seed: int = 2024
-    campaign: str = "uds_baseline"
-    output_dir: Path = Path("result")
-    interface: str = "socketcan"
-    channel: str = "can0"
-    bitrate: int | None = 500000
-    auto_bitrate: bool = False
-    bitrate_candidates: tuple[int, ...] = (500000, 250000, 125000, 1000000, 800000, 100000, 50000)
-    bitrate_probe_timeout: float = 0.2
-    receive_timeout: float = 0.15
-    inter_request_delay_ms: float = 10.0
-    request_mode: str = "mixed"
-    functional_id: int = 0x7DF
-    physical_start: int = 0x7E0
-    physical_end: int = 0x7E7
-    service_bias: float = 0.85
-    malformed_rate: float = 0.15
-    progress_interval: int = 100
-    progress_seconds: float = 1.0
-    keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
+    hardware: CANHardwareConfig
+    cases: int
+    seed: int
+    campaign: str
+    output_dir: Path
+    inter_request_delay_ms: float
+    request_mode: str
+    functional_id: int
+    physical_start: int
+    physical_end: int
+    service_bias: float
+    malformed_rate: float
+    progress_interval: int
+    progress_seconds: float
+    keepalive: KeepaliveConfig
 
 
 @dataclass(frozen=True)
@@ -79,17 +73,7 @@ def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], N
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with CANHardwareAdapter(
-        interface=config.interface,
-        channel=config.channel,
-        bitrate=config.bitrate,
-        receive_timeout=config.receive_timeout,
-        fd=False,
-        data_bitrate=None,
-        auto_bitrate=config.auto_bitrate,
-        bitrate_candidates=config.bitrate_candidates,
-        bitrate_probe_timeout=config.bitrate_probe_timeout,
-    ) as adapter, KeepaliveSession(
+    with CANHardwareAdapter(config.hardware) as adapter, KeepaliveSession(
         adapter,
         config.keepalive,
         config.output_dir / f"{config.campaign}_keepalive.csv",
@@ -321,9 +305,9 @@ def write_summary(
         "requested_cases": config.cases,
         "completed_cases": completed_cases,
         "seed": config.seed,
-        "interface": config.interface,
-        "channel": config.channel,
-        "bitrate": config.bitrate,
+        "interface": config.hardware.interface,
+        "channel": config.hardware.channel,
+        "bitrate": config.hardware.bitrate,
         "request_mode": config.request_mode,
         "functional_id": config.functional_id,
         "physical_start": config.physical_start,
@@ -345,5 +329,3 @@ def write_summary(
         "csv_path": str(csv_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-

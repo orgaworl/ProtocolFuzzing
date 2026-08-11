@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import shutil
@@ -11,6 +11,7 @@ from .runtime.adapters import CANHardwareAdapter
 from .runtime.errors import CANConnectionError
 from .config import (
     build_fuzz_keepalive_config,
+    build_hardware_config,
     normalize_protocol,
     parse_hex_bytes,
     parse_interface_names,
@@ -39,6 +40,10 @@ from .log import (
 )
 
 
+def resolve_hardware(args: SimpleNamespace, section: str) -> Any:
+    args.interface, args.channel = resolve_interface_and_channel(args, section)
+    return build_hardware_config(vars(args))
+
 def run_fuzz_from_args(args: SimpleNamespace) -> None:
     protocol = normalize_protocol(getattr(args, "protocol", None)) or "can"
     args.protocol = protocol
@@ -50,7 +55,6 @@ def run_fuzz_from_args(args: SimpleNamespace) -> None:
         run_dbcfuzz_from_args(args)
         return
 
-    args.interface, args.channel = resolve_interface_and_channel(args, "fuzz")
     if protocol == "uds":
         run_udsfuzz_from_args(args)
         return
@@ -64,26 +68,14 @@ def run_fuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_can_fuzz_from_args(args: SimpleNamespace) -> None:
-    args.interface, args.channel = resolve_interface_and_channel(args, "fuzz")
+    hardware = resolve_hardware(args, "fuzz")
     config = FuzzConfig(
+        hardware=hardware,
         cases=args.cases,
         seed=args.seed,
         campaign=args.campaign,
         output_dir=Path(args.output_dir),
-        interface=args.interface,
-        channel=args.channel,
-        bitrate=args.bitrate,
-        receive_timeout=args.receive_timeout,
         inter_frame_delay_ms=args.inter_frame_delay_ms,
-        fd=args.fd,
-        data_bitrate=args.data_bitrate,
-        auto_bitrate=args.auto_bitrate,
-        bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-        data_bitrate_candidates=tuple(parse_int_list(args.data_bitrate_candidates)),
-        bitrate_probe_timeout=args.bitrate_probe_timeout,
-        fd_clock=args.fd_clock,
-        nominal_sample_point=args.nominal_sample_point,
-        data_sample_point=args.data_sample_point,
         id_min=args.id_min,
         id_max=args.id_max,
         diagnostic_bias=args.diagnostic_bias,
@@ -95,7 +87,7 @@ def run_can_fuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("fuzz", "can", config.campaign, config.cases)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases})
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "cases": config.cases})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_fuzzing(config, progress_callback=log_can_event)
@@ -112,37 +104,25 @@ def run_can_fuzz_from_args(args: SimpleNamespace) -> None:
 def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
     if not getattr(args, "dbc_file", None):
         raise SystemExit("missing required argument: --dbc_file")
-    args.interface, args.channel = resolve_interface_and_channel(args, "fuzz")
+    hardware = resolve_hardware(args, "fuzz")
     dbc_file = Path(str(args.dbc_file))
     if not dbc_file.exists():
         raise SystemExit(f"DBC file not found: {dbc_file}")
-    campaign = args.campaign if getattr(args, "campaign", None) != "can_baseline" else "dbc_baseline"
+    campaign = args.campaign
     config = DBCFuzzConfig(
+        hardware=hardware,
         dbc_file=dbc_file,
         cases=args.cases,
         seed=args.seed,
         campaign=campaign,
         output_dir=Path(args.output_dir),
-        interface=args.interface,
-        channel=args.channel,
-        bitrate=args.bitrate,
-        receive_timeout=args.receive_timeout,
         inter_frame_delay_ms=args.inter_frame_delay_ms,
-        fd=args.fd,
-        data_bitrate=args.data_bitrate,
-        auto_bitrate=args.auto_bitrate,
-        bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-        data_bitrate_candidates=tuple(parse_int_list(args.data_bitrate_candidates)),
-        bitrate_probe_timeout=args.bitrate_probe_timeout,
-        fd_clock=args.fd_clock,
-        nominal_sample_point=args.nominal_sample_point,
-        data_sample_point=args.data_sample_point,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("fuzz", "dbc", config.campaign, config.cases)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "dbc_file": config.dbc_file})
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "cases": config.cases, "dbc_file": config.dbc_file})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_dbc_fuzzing(config, progress_callback=log_can_event)
@@ -157,36 +137,22 @@ def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_keepalive_from_args(args: SimpleNamespace) -> None:
-    interface, channel = resolve_interface_and_channel(args, "keepalive")
+    hardware = resolve_hardware(args, "keepalive")
+    keepalive_args = build_keepalive_args(vars(args))
     config = KeepaliveConfig(
         enabled=True,
-        arbitration_id=args.arbitration_id,
-        payload=parse_hex_bytes(args.payload),
-        interval_ms=args.interval_ms,
-        extended=args.format == "extended",
-        fd=args.fd,
-        listen=args.listen,
-        listen_timeout=args.listen_timeout,
-        check_message=args.check_message,
+        arbitration_id=keepalive_args.arbitration_id,
+        payload=parse_hex_bytes(keepalive_args.payload),
+        interval_ms=keepalive_args.interval_ms,
+        extended=keepalive_args.format == "extended",
+        fd=keepalive_args.fd,
+        listen=keepalive_args.listen,
+        listen_timeout=keepalive_args.listen_timeout,
+        check_message=keepalive_args.check_message,
     )
-    log_structured("info", "opening", {"interface": interface, "channel": channel, "bitrate": args.bitrate, "interval_ms": config.interval_ms, "id": f"0x{config.arbitration_id:x}", "preset": args.preset})
+    log_structured("info", "opening", {"interface": hardware.interface, "channel": hardware.channel, "bitrate": hardware.bitrate, "interval_ms": keepalive_args.interval_ms, "id": f"0x{keepalive_args.arbitration_id:x}", "preset": keepalive_args.preset})
     try:
-        with CANHardwareAdapter(
-            interface=interface,
-            channel=channel,
-            bitrate=args.bitrate,
-            receive_timeout=0.05,
-            fd=args.fd,
-            data_bitrate=args.data_bitrate,
-            auto_bitrate=args.auto_bitrate,
-            bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-            data_bitrate_candidates=tuple(parse_int_list(args.data_bitrate_candidates)),
-            bitrate_probe_timeout=args.bitrate_probe_timeout,
-            fd_clock=args.fd_clock,
-            nominal_sample_point=args.nominal_sample_point,
-            data_sample_point=args.data_sample_point,
-            check_message=args.check_message,
-        ) as adapter:
+        with CANHardwareAdapter(hardware) as adapter:
             worker = KeepaliveWorker(adapter, config, response_callback=log_keepalive_response)
             worker.start()
             log_structured("info", "keepalive", {"status": "running", "action": "press_ctrl_c_to_stop"})
@@ -289,34 +255,23 @@ def prompt_interface_selection(configs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_scan_from_args(args: SimpleNamespace) -> None:
-    args.interface, args.channel = resolve_interface_and_channel(args, "scan")
+    hardware = resolve_hardware(args, "scan")
     passive = not args.active_only
     active = not args.passive_only
     config = ScanConfig(
-        interface=args.interface,
-        channel=args.channel,
-        bitrate=args.bitrate,
+        hardware=hardware,
         output_dir=Path(args.output_dir),
         campaign=args.campaign,
         passive_duration=args.passive_duration,
         active_timeout=args.active_timeout,
         inter_probe_delay_ms=args.inter_probe_delay_ms,
-        fd=args.fd,
-        data_bitrate=args.data_bitrate,
-        auto_bitrate=args.auto_bitrate,
-        bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-        data_bitrate_candidates=tuple(parse_int_list(args.data_bitrate_candidates)),
-        bitrate_probe_timeout=args.bitrate_probe_timeout,
-        fd_clock=args.fd_clock,
-        nominal_sample_point=args.nominal_sample_point,
-        data_sample_point=args.data_sample_point,
         active=active,
         passive=passive,
         physical_start=args.physical_start,
         physical_end=args.physical_end,
     )
     start_run_summary("scan", "scan", config.campaign, None)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "passive": config.passive, "active": config.active})
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "passive": config.passive, "active": config.active})
     try:
         summary = run_scan(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
@@ -338,27 +293,16 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
 
 
 def run_fdcheck_from_args(args: SimpleNamespace) -> None:
-    args.interface, args.channel = resolve_interface_and_channel(args, "fdcheck")
+    hardware = resolve_hardware(args, "fdcheck")
     config = FDCheckConfig(
-        interface=args.interface,
-        channel=args.channel,
-        bitrate=args.bitrate,
-        data_bitrate=args.data_bitrate,
-        auto_bitrate=args.auto_bitrate,
-        bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-        data_bitrate_candidates=tuple(parse_int_list(args.data_bitrate_candidates)),
-        bitrate_probe_timeout=args.bitrate_probe_timeout,
-        fd_timing_preset=args.fd_timing_preset,
-        fd_clock=args.fd_clock,
-        nominal_sample_point=args.nominal_sample_point,
-        data_sample_point=args.data_sample_point,
+        hardware=hardware,
         output_dir=Path(args.output_dir),
         campaign=args.campaign,
         probe_timeout=args.probe_timeout,
         probe_delay_ms=args.probe_delay_ms,
     )
     start_run_summary("fdcheck", "fdcheck", config.campaign, len(config.probe_lengths) * 4)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "data_bitrate": config.data_bitrate, "fd_timing_preset": config.fd_timing_preset, "fd_clock": config.fd_clock, "fd": True})
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "data_bitrate": config.hardware.data_bitrate, "fd_timing_preset": config.hardware.fd_timing_preset, "fd_clock": config.hardware.fd_clock, "fd": True})
     try:
         result = run_fdcheck(config, progress_callback=log_can_event)
     except CANConnectionError as exc:
@@ -378,18 +322,13 @@ def run_fdcheck_from_args(args: SimpleNamespace) -> None:
 
 
 def run_udsfuzz_from_args(args: SimpleNamespace) -> None:
+    hardware = resolve_hardware(args, "fuzz")
     config = UDSFuzzConfig(
+        hardware=hardware,
         cases=args.cases,
         seed=args.seed,
         campaign=args.campaign,
         output_dir=Path(args.output_dir),
-        interface=args.interface,
-        channel=args.channel,
-        bitrate=args.bitrate,
-        auto_bitrate=args.auto_bitrate,
-        bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-        bitrate_probe_timeout=args.bitrate_probe_timeout,
-        receive_timeout=args.receive_timeout,
         inter_request_delay_ms=args.inter_request_delay_ms,
         request_mode=args.request_mode,
         functional_id=args.functional_id,
@@ -402,7 +341,7 @@ def run_udsfuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("udsfuzz", "uds", config.campaign, config.cases)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "request_mode": config.request_mode})
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "cases": config.cases, "request_mode": config.request_mode})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_uds_fuzzing(config, progress_callback=log_can_event)
@@ -418,18 +357,13 @@ def run_udsfuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_obdfuzz_from_args(args: SimpleNamespace) -> None:
+    hardware = resolve_hardware(args, "fuzz")
     config = OBDFuzzConfig(
+        hardware=hardware,
         cases=args.cases,
         seed=args.seed,
         campaign=args.campaign,
         output_dir=Path(args.output_dir),
-        interface=args.interface,
-        channel=args.channel,
-        bitrate=args.bitrate,
-        auto_bitrate=args.auto_bitrate,
-        bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-        bitrate_probe_timeout=args.bitrate_probe_timeout,
-        receive_timeout=args.receive_timeout,
         inter_request_delay_ms=args.inter_request_delay_ms,
         request_mode=args.request_mode,
         functional_id=args.functional_id,
@@ -442,7 +376,7 @@ def run_obdfuzz_from_args(args: SimpleNamespace) -> None:
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("obdfuzz", "obd", config.campaign, config.cases)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "request_mode": config.request_mode})
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "cases": config.cases, "request_mode": config.request_mode})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_obd_fuzzing(config, progress_callback=log_can_event)
@@ -458,15 +392,13 @@ def run_obdfuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_privatefuzz_from_args(args: SimpleNamespace) -> None:
+    hardware = resolve_hardware(args, "fuzz")
     config = PrivateFuzzConfig(
+        hardware=hardware,
         cases=args.cases,
         seed=args.seed,
         campaign=args.campaign,
         output_dir=Path(args.output_dir),
-        interface=args.interface,
-        channel=args.channel,
-        bitrate=args.bitrate,
-        receive_timeout=args.receive_timeout,
         inter_request_delay_ms=args.inter_request_delay_ms,
         target_ids=tuple(parse_int_list(args.target_ids)),
         opcodes=tuple(parse_int_list(args.opcodes)),
@@ -475,21 +407,12 @@ def run_privatefuzz_from_args(args: SimpleNamespace) -> None:
         min_payload_len=args.min_payload_len,
         max_payload_len=args.max_payload_len,
         extended=args.extended,
-        fd=args.fd,
-        data_bitrate=args.data_bitrate,
-        auto_bitrate=args.auto_bitrate,
-        bitrate_candidates=tuple(parse_int_list(args.bitrate_candidates)),
-        data_bitrate_candidates=tuple(parse_int_list(args.data_bitrate_candidates)),
-        bitrate_probe_timeout=args.bitrate_probe_timeout,
-        fd_clock=args.fd_clock,
-        nominal_sample_point=args.nominal_sample_point,
-        data_sample_point=args.data_sample_point,
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
         keepalive=build_fuzz_keepalive_config(args),
     )
     start_run_summary("privatefuzz", "private", config.campaign, config.cases)
-    log_structured("info", "opening", {"interface": config.interface, "channel": config.channel, "bitrate": config.bitrate, "cases": config.cases, "targets": len(config.target_ids), "opcodes": len(config.opcodes)})
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "cases": config.cases, "targets": len(config.target_ids), "opcodes": len(config.opcodes)})
     log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
     try:
         result = run_private_fuzzing(config, progress_callback=log_can_event)
@@ -512,23 +435,3 @@ def clean_directory(path: Path) -> None:
             shutil.rmtree(child)
         else:
             child.unlink()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
