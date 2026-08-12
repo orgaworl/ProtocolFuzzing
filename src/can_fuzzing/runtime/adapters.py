@@ -14,9 +14,9 @@ from .errors import (
     build_os_error_message,
     build_unknown_channel_message,
 )
-from .models import CANFrame, CANHardwareConfig, FrameType, HardwareObservation
+from .adapter_strategy import build_message, build_open_kwargs, is_echo_message, should_auto_detect_bitrate
+from .models import CANFrame, CANHardwareConfig, HardwareObservation
 from .timing import build_fd_timing
-
 
 
 class CANHardwareAdapter:
@@ -81,11 +81,7 @@ class CANHardwareAdapter:
             self._bus = None
 
     def _should_auto_detect_bitrate(self) -> bool:
-        if not self.auto_bitrate:
-            return False
-        if self.timing is not None:
-            return False
-        return self.bitrate is None or (self.fd and self.data_bitrate is None)
+        return should_auto_detect_bitrate(self.auto_bitrate, self.timing, self.bitrate, self.fd, self.data_bitrate)
 
     def _open_bus(self, can_module: Any, bitrate: int | None, data_bitrate: int | None, timing: Any | None = None):
         kwargs: dict[str, Any] = {"interface": self.interface, "channel": self.channel}
@@ -237,29 +233,10 @@ class CANHardwareAdapter:
 
     @staticmethod
     def _is_echo_message(sent_message: Any, received_message: Any) -> bool:
-        return (
-            getattr(received_message, "arbitration_id", None) == getattr(sent_message, "arbitration_id", None)
-            and bytes(getattr(received_message, "data", b"")) == bytes(getattr(sent_message, "data", b""))
-            and getattr(received_message, "is_extended_id", None) == getattr(sent_message, "is_extended_id", None)
-            and getattr(received_message, "is_remote_frame", None) == getattr(sent_message, "is_remote_frame", None)
-            and getattr(received_message, "is_error_frame", None) == getattr(sent_message, "is_error_frame", None)
-            and getattr(received_message, "is_fd", None) == getattr(sent_message, "is_fd", None)
-        )
+        return is_echo_message(sent_message, received_message)
 
     def _build_message(self, frame: CANFrame, is_fd: bool | None = None, check_message: bool | None = None):
-        try:
-            import can
-        except ImportError as exc:
-            raise RuntimeError("python-can is required for real CAN device testing") from exc
-        return can.Message(
-            arbitration_id=frame.identifier,
-            data=frame.data,
-            is_extended_id=frame.frame_format.value == "extended",
-            is_remote_frame=frame.frame_type == FrameType.REMOTE,
-            is_error_frame=frame.frame_type == FrameType.ERROR,
-            is_fd=self.fd if is_fd is None else is_fd,
-            check=self.check_message if check_message is None else check_message,
-        )
+        return build_message(frame, self.fd, self.check_message, is_fd=is_fd, check_override=check_message)
 
 
 def quiet_call(func, *args, **kwargs):
