@@ -4,7 +4,6 @@ import csv
 import json
 import random
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from .utils import report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
 from ..protocol.dictionary import COMMON_CAN_IDS, COMMON_CLASSIC_LENGTHS, COMMON_DIAGNOSTIC_TEMPLATES, COMMON_DIAGNOSTIC_TEMPLATES_FD, COMMON_FD_LENGTHS
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
+from ..runtime.types import ProgressCallback
 
 DIAGNOSTIC_IDS = COMMON_CAN_IDS
 
@@ -62,7 +62,7 @@ class FuzzResult:
     summary_path: Path
 
 
-def run_fuzzing(config: FuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> FuzzResult:
+def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None = None) -> FuzzResult:
     rng = random.Random(config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 

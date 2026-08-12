@@ -4,7 +4,6 @@ import csv
 import json
 import random
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,7 @@ from ..log import warning
 from .utils import report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
+from ..runtime.types import ProgressCallback
 from ..protocol.dbc import DBCDatabase, DBCMessage, DBCSignal, coerce_number, load_dbc_database
 
 
@@ -48,7 +48,7 @@ class DBCFuzzResult:
     summary_path: Path
 
 
-def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> DBCFuzzResult:
+def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: ProgressCallback | None = None) -> DBCFuzzResult:
     rng = random.Random(config.seed)
     database = load_dbc_database(config.dbc_file)
     if not database.messages:

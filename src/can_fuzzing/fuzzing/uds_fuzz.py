@@ -4,7 +4,6 @@ import csv
 import json
 import random
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from ..protocol.uds import build_request, summarize_responses
 from ..runtime.adapters import CANHardwareAdapter
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
+from ..runtime.types import ProgressCallback
 from .utils import report_progress, should_report_progress
 
 
@@ -53,7 +53,7 @@ class UDSFuzzResult:
     summary_path: Path
 
 
-def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> UDSFuzzResult:
+def run_uds_fuzzing(config: UDSFuzzConfig, progress_callback: ProgressCallback | None = None) -> UDSFuzzResult:
     rng = random.Random(config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 

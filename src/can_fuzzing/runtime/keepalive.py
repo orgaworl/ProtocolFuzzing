@@ -5,10 +5,11 @@ import time
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Any
+from typing import Any
 
 from .adapters import CANHardwareAdapter
 from .models import CANFrame, FrameFormat, FrameType
+from .types import MessageCallback, ProgressCallback
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ class KeepaliveWorker:
         self,
         adapter: CANHardwareAdapter,
         config: KeepaliveConfig,
-        response_callback: Callable[[Any], None] | None = None,
+        response_callback: MessageCallback | None = None,
     ) -> None:
         self._adapter = adapter
         self._config = config
@@ -123,7 +124,7 @@ class KeepaliveSession:
         adapter: CANHardwareAdapter,
         config: KeepaliveConfig,
         csv_path: Path,
-        progress_callback: Callable[[dict], None] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         self._adapter = adapter
         self._config = config
@@ -196,8 +197,3 @@ class KeepaliveSession:
 
 def keepalive_response_fieldnames() -> list[str]:
     return ["timestamp", "arbitration_id", "dlc", "payload_hex", "fd"]
-
-
-
-
-

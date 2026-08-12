@@ -1,7 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import random
-from collections.abc import Callable
 from typing import Protocol
 
 
@@ -27,9 +26,7 @@ def should_report_progress(config: ProgressConfig, completed_cases: int, now: fl
     return False
 
 
-def report_progress(progress_callback: Callable[[dict], None] | None, **snapshot: object) -> None:
+def report_progress(progress_callback: ProgressCallback | None, **snapshot: object) -> None:
     if progress_callback is None:
         return
     progress_callback(snapshot)
-
-

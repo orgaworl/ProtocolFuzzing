@@ -4,7 +4,6 @@ import csv
 import json
 import random
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from ..protocol.private_control import build_request
 from ..runtime.adapters import CANHardwareAdapter
 from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
+from ..runtime.types import ProgressCallback
 from .utils import report_progress, should_report_progress
 
 
@@ -51,7 +51,7 @@ class PrivateFuzzResult:
     summary_path: Path
 
 
-def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: Callable[[dict], None] | None = None) -> PrivateFuzzResult:
+def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCallback | None = None) -> PrivateFuzzResult:
     rng = random.Random(config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
