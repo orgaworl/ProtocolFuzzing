@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import random
 from dataclasses import dataclass
@@ -8,7 +8,6 @@ from .dictionary import (
     UDS_COMMUNICATION_SUBFUNCTIONS,
     UDS_DIDS,
     UDS_DTC_SETTING_VALUES,
-    UDS_DTC_STATUS_MASKS,
     UDS_ECU_RESET_TYPES,
     UDS_ROUTINE_SUBFUNCTIONS,
     UDS_SECURITY_SUBFUNCTIONS,
@@ -17,7 +16,7 @@ from .dictionary import (
     UDS_SERVICE_POOL,
     UDS_TESTER_PRESENT_SUBFUNCTIONS,
 )
-from .isotp import decode_isotp_payload
+from .isotp import IsoTp, decode_isotp_payload
 
 
 @dataclass(frozen=True)
@@ -28,6 +27,96 @@ class UDSRequest:
     service_name: str
     application_payload: bytes
     is_malformed: bool
+
+
+@dataclass(frozen=True)
+class UDSResponseFrame:
+    frame_kind: str
+    payload: bytes
+    service_id: int | None = None
+    positive: bool = False
+    negative: bool = False
+    nrc: int | None = None
+
+
+@dataclass(frozen=True)
+class UDSResponseSummary:
+    positive: int
+    negative: int
+    multi_frame: int
+    nrcs: tuple[str, ...]
+    kind: str
+
+
+class UDSProtocol:
+    def __init__(self, padding_value: int | None = 0x00) -> None:
+        self._isotp = IsoTp(padding_value=padding_value)
+
+    def encode_request_frames(self, application_payload: bytes) -> list[bytes]:
+        return self._isotp.segment_message(application_payload)
+
+    def decode_response(self, raw: bytes, request_service: int) -> UDSResponseFrame:
+        frame_kind, app_payload = decode_isotp_payload(raw)
+        if frame_kind != "single_frame" or not app_payload:
+            return UDSResponseFrame(frame_kind=frame_kind, payload=app_payload)
+
+        service_id = app_payload[0]
+        if service_id == 0x7F and len(app_payload) >= 3:
+            return UDSResponseFrame(
+                frame_kind="negative_response",
+                payload=app_payload,
+                service_id=service_id,
+                negative=True,
+                nrc=app_payload[2],
+            )
+        if service_id == ((request_service + 0x40) & 0xFF):
+            return UDSResponseFrame(
+                frame_kind="positive_response",
+                payload=app_payload,
+                service_id=service_id,
+                positive=True,
+            )
+        return UDSResponseFrame(frame_kind=f"service_0x{service_id:02x}", payload=app_payload, service_id=service_id)
+
+    def summarize_responses(self, response_payloads: list[str], request_service: int) -> UDSResponseSummary:
+        positive = 0
+        negative = 0
+        multi_frame = 0
+        nrcs: list[str] = []
+        kind = "no_response"
+
+        for raw_hex in response_payloads:
+            response = self.decode_response(bytes.fromhex(raw_hex), request_service)
+            if response.positive:
+                positive += 1
+                kind = response.frame_kind
+            elif response.negative:
+                negative += 1
+                if response.nrc is not None:
+                    nrcs.append(f"0x{response.nrc:02x}")
+                kind = response.frame_kind
+            elif response.frame_kind in {"first_frame", "consecutive_frame"}:
+                multi_frame += 1
+                kind = response.frame_kind
+            else:
+                kind = response.frame_kind
+
+        return UDSResponseSummary(
+            positive=positive,
+            negative=negative,
+            multi_frame=multi_frame,
+            nrcs=tuple(nrcs),
+            kind=kind,
+        )
+
+
+class UDSRequestBuilder:
+    @staticmethod
+    def build_request_frames(application_payload: bytes, padding_value: int | None = 0x00) -> list[bytes]:
+        return IsoTp(padding_value=padding_value).segment_message(application_payload)
+
+
+_UDS_PROTOCOL = UDSProtocol()
 
 
 def build_request(rng: random.Random, config) -> UDSRequest:
@@ -130,42 +219,13 @@ def build_malformed_payload(rng: random.Random, service_id: int) -> bytes:
 
 
 def summarize_responses(response_payloads: list[str], request_service: int) -> dict[str, object]:
-    positive = 0
-    negative = 0
-    multi_frame = 0
-    nrcs: list[str] = []
-    kind = "no_response"
-
-    for raw_hex in response_payloads:
-        raw = bytes.fromhex(raw_hex)
-        frame_kind, app_payload = decode_isotp_payload(raw)
-        if frame_kind == "single_frame" and app_payload:
-            kind = "single_frame"
-            service_id = app_payload[0]
-            if service_id == 0x7F and len(app_payload) >= 3:
-                negative += 1
-                nrc = app_payload[2]
-                nrcs.append(f"0x{nrc:02x}")
-                kind = "negative_response"
-            elif service_id == ((request_service + 0x40) & 0xFF):
-                positive += 1
-                kind = "positive_response"
-            else:
-                kind = f"service_0x{service_id:02x}"
-        elif frame_kind in {"first_frame", "consecutive_frame"}:
-            multi_frame += 1
-            kind = frame_kind
-        elif frame_kind == "flow_control":
-            kind = frame_kind
-        else:
-            kind = frame_kind
-
+    summary = _UDS_PROTOCOL.summarize_responses(response_payloads, request_service)
     return {
-        "positive": positive,
-        "negative": negative,
-        "multi_frame": multi_frame,
-        "nrcs": nrcs,
-        "kind": kind,
+        "positive": summary.positive,
+        "negative": summary.negative,
+        "multi_frame": summary.multi_frame,
+        "nrcs": list(summary.nrcs),
+        "kind": summary.kind,
     }
 
 
@@ -174,6 +234,3 @@ def choose_did(rng: random.Random) -> bytes:
         return rng.choice(UDS_DIDS)
     did = rng.randrange(0x0000, 0xFFFF)
     return bytes([(did >> 8) & 0xFF, did & 0xFF])
-
-
-
