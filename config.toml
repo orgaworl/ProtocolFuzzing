@@ -64,6 +64,12 @@ physical_start = 0x7e0
 physical_end = 0x7e7
 passive_only = false
 active_only = false
+isotp = true
+isotp_request_id_start = 0x7e0
+isotp_request_id_end = 0x7e7
+isotp_sniff_time = 0.1
+isotp_verify_results = true
+isotp_extended_can_id = false
 no_progress = false
 
 [udsfuzz]

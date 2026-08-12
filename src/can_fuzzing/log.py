@@ -539,6 +539,33 @@ def print_scan_objects_table(objects: list[dict[str, Any]]) -> None:
         debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
 
+
+def print_isotp_nodes_table(nodes: list[dict[str, Any]]) -> None:
+    if not nodes:
+        log_structured("warning", "isotp_nodes", {"count": 0, "result": "none"})
+        return
+
+    headers = ["request_id", "response_id", "frame_format", "addressing", "response_payload"]
+    rows = [
+        [
+            str(item.get("request_id", "")),
+            str(item.get("response_id", "")),
+            str(item.get("frame_format", "")),
+            str(item.get("addressing", "")),
+            str(item.get("response_payload", "")),
+        ]
+        for item in nodes
+    ]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+    log_structured("debug", "isotp_nodes", {"count": len(nodes)})
+    debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    debug("  ".join("-" * width for width in widths))
+    for row in rows:
+        debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+
 def format_interface_row(config: dict[str, Any]) -> list[str]:
     return [
         str(config.get("interface", "")),

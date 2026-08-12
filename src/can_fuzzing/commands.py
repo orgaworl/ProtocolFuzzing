@@ -22,6 +22,7 @@ from .fuzzing.private_control_fuzz import PrivateFuzzConfig, run_private_fuzzing
 from .fuzzing.uds_fuzz import UDSFuzzConfig, run_uds_fuzzing
 from .fuzzing.xcp_fuzz import XCPFuzzConfig, run_xcp_fuzzing
 from .scanning.can_id_scan import ScanConfig, run_scan
+from .scanning.isotp_scan import IsoTpScanConfig, run_isotp_scan
 from .command_support import discover_interfaces, resolve_hardware
 from .log import (
     format_bool,
@@ -32,6 +33,7 @@ from .log import (
     start_run_summary,
     print_interface_table,
     print_scan_objects_table,
+    print_isotp_nodes_table,
     print_status_line,
     print_status_value,
     status_level,
@@ -256,6 +258,27 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
         log_structured("debug", "diagnostic_response_ids", {"value": diagnostic_ids})
     log_structured("info", "files", {"ids_csv": summary['ids_csv_path'], "active_csv": summary['active_csv_path']})
     print_scan_objects_table(summary.get("observed_objects", []))
+
+    if getattr(args, "isotp", False):
+        isotp_config = IsoTpScanConfig(
+            hardware=hardware,
+            output_dir=Path(args.output_dir),
+            campaign=f"{args.campaign}_isotp",
+            request_id_start=args.isotp_request_id_start,
+            request_id_end=args.isotp_request_id_end,
+            sniff_time=args.isotp_sniff_time,
+            verify_results=args.isotp_verify_results,
+            extended_can_id=args.isotp_extended_can_id,
+        )
+        log_structured("info", "isotp_scan", {"request_id_start": f"0x{isotp_config.request_id_start:x}", "request_id_end": f"0x{isotp_config.request_id_end:x}", "sniff_time": isotp_config.sniff_time})
+        try:
+            isotp_summary = run_isotp_scan(isotp_config, progress_callback=log_can_event)
+        except CANConnectionError as exc:
+            log_structured("error", "error", {"message": exc})
+            raise SystemExit(2) from exc
+        log_structured("info", "isotp_nodes", {"count": isotp_summary["node_count"]})
+        log_structured("info", "files", {"isotp_nodes_csv": isotp_summary["nodes_csv_path"]})
+        print_isotp_nodes_table(isotp_summary.get("nodes", []))
 
 
 def run_fdcheck_from_args(args: SimpleNamespace) -> None:
