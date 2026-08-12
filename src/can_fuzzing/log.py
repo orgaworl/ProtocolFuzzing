@@ -593,6 +593,35 @@ def print_isotp_protocols_table(protocols: list[dict[str, Any]]) -> None:
     for row in rows:
         debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
+
+def print_xcp_nodes_table(nodes: list[dict[str, Any]]) -> None:
+    if not nodes:
+        log_structured("warning", "xcp_nodes", {"count": 0, "result": "none"})
+        return
+
+    headers = ["request_id", "response_id", "kind", "error", "max_cto", "max_dto", "versions"]
+    rows = [
+        [
+            str(item.get("request_id", "")),
+            str(item.get("response_id", "")),
+            str(item.get("response_kind", "")),
+            str(item.get("error_name", "")) or str(item.get("error_code", "")),
+            "" if item.get("max_cto") is None else str(item.get("max_cto")),
+            "" if item.get("max_dto") is None else str(item.get("max_dto")),
+            f"{item.get('protocol_version', '')}/{item.get('transport_version', '')}",
+        ]
+        for item in nodes
+    ]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+    log_structured("debug", "xcp_nodes", {"count": len(nodes)})
+    debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    debug("  ".join("-" * width for width in widths))
+    for row in rows:
+        debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+
 def format_interface_row(config: dict[str, Any]) -> list[str]:
     return [
         str(config.get("interface", "")),

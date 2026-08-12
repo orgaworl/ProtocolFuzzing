@@ -23,6 +23,7 @@ from .fuzzing.uds_fuzz import UDSFuzzConfig, run_uds_fuzzing
 from .fuzzing.xcp_fuzz import XCPFuzzConfig, run_xcp_fuzzing
 from .scanning.can_id_scan import ScanConfig, run_scan
 from .scanning.isotp_scan import IsoTpScanConfig, run_isotp_scan
+from .scanning.xcp_scan import XCPScanConfig, run_xcp_scan
 from .command_support import discover_interfaces, resolve_hardware
 from .log import (
     format_bool,
@@ -35,6 +36,7 @@ from .log import (
     print_scan_objects_table,
     print_isotp_nodes_table,
     print_isotp_protocols_table,
+    print_xcp_nodes_table,
     print_status_line,
     print_status_value,
     status_level,
@@ -283,6 +285,27 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
         log_structured("info", "files", {"isotp_nodes_csv": isotp_summary["nodes_csv_path"], "isotp_protocols_csv": isotp_summary["protocols_csv_path"]})
         print_isotp_nodes_table(isotp_summary.get("nodes", []))
         print_isotp_protocols_table(isotp_summary.get("protocols", []))
+
+    if getattr(args, "xcp", False):
+        xcp_config = XCPScanConfig(
+            hardware=hardware,
+            output_dir=Path(args.output_dir),
+            campaign=f"{args.campaign}_xcp",
+            request_id_start=args.xcp_request_id_start,
+            request_id_end=args.xcp_request_id_end,
+            response_timeout=args.xcp_response_timeout,
+            inter_probe_delay_ms=args.xcp_inter_probe_delay_ms,
+            extended_can_id=args.xcp_extended_can_id,
+        )
+        log_structured("info", "xcp_scan", {"request_id_start": f"0x{xcp_config.request_id_start:x}", "request_id_end": f"0x{xcp_config.request_id_end:x}", "response_timeout": xcp_config.response_timeout})
+        try:
+            xcp_summary = run_xcp_scan(xcp_config, progress_callback=log_can_event)
+        except CANConnectionError as exc:
+            log_structured("error", "error", {"message": exc})
+            raise SystemExit(2) from exc
+        log_structured("info", "xcp_nodes", {"count": xcp_summary["node_count"], "positive": xcp_summary["positive_nodes"], "negative": xcp_summary["negative_nodes"]})
+        log_structured("info", "files", {"xcp_nodes_csv": xcp_summary["nodes_csv_path"]})
+        print_xcp_nodes_table(xcp_summary.get("nodes", []))
 
 
 def run_fdcheck_from_args(args: SimpleNamespace) -> None:

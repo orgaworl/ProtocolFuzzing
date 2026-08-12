@@ -72,6 +72,12 @@ isotp_verify_results = true
 isotp_extended_can_id = false
 isotp_protocol_probe = true
 isotp_protocol_probe_timeout = 0.2
+xcp = false
+xcp_request_id_start = 0x000
+xcp_request_id_end = 0x7ff
+xcp_response_timeout = 0.1
+xcp_inter_probe_delay_ms = 2.0
+xcp_extended_can_id = false
 no_progress = false
 
 [udsfuzz]
