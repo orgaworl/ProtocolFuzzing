@@ -9,8 +9,10 @@ from scapy.contrib.isotp.isotp_scanner import get_isotp_packet
 from can_fuzzing.scanning.isotp_scan import (
     IsoTpNode,
     IsoTpScanConfig,
+    ProtocolProbeResult,
     build_summary,
     can_message_to_scapy_packet,
+    classify_protocol_response,
     scapy_packet_to_can_frame,
 )
 from can_fuzzing.runtime.models import CANHardwareConfig, FrameFormat
@@ -40,11 +42,23 @@ class IsoTpScanTests(unittest.TestCase):
             sniff_time=0.1,
             verify_results=True,
             extended_can_id=False,
+            protocol_probe=True,
+            protocol_probe_timeout=0.2,
         )
-        summary = build_summary(config, [IsoTpNode(0x7E0, 0x7E8, "3000000000000000", "standard", "normal")], Path("nodes.csv"), False)
+        probes = [ProtocolProbeResult(0x7E0, 0x7E8, True, False, "uds:027e00", ("027e00",))]
+        summary = build_summary(config, [IsoTpNode(0x7E0, 0x7E8, "3000000000000000", "standard", "normal")], probes, Path("nodes.csv"), Path("protocols.csv"), False)
         self.assertEqual(summary["node_count"], 1)
+        self.assertEqual(summary["uds_node_count"], 1)
+        self.assertEqual(summary["obd_node_count"], 0)
         self.assertEqual(summary["nodes"][0]["request_id"], "0x7e0")
         self.assertEqual(summary["nodes"][0]["response_id"], "0x7e8")
+        self.assertEqual(summary["protocols"][0]["uds"], True)
+
+    def test_classify_protocol_response(self) -> None:
+        self.assertEqual(classify_protocol_response("uds_tester_present", bytes([0x7E, 0x00])), "uds")
+        self.assertEqual(classify_protocol_response("uds_default_session", bytes([0x7F, 0x10, 0x11])), "uds")
+        self.assertEqual(classify_protocol_response("obd_supported_pids", bytes([0x41, 0x00, 0xBE, 0x1F, 0xA8, 0x13])), "obd")
+        self.assertEqual(classify_protocol_response("obd_vehicle_info", bytes([0x7F, 0x09, 0x12])), "obd")
 
 
 if __name__ == "__main__":

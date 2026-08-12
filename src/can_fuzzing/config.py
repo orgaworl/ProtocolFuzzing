@@ -249,7 +249,7 @@ CLEAN_KEYS = {"result_dir"}
 KEEPALIVE_FUZZ_KEYS = {"keepalive", "keepalive_preset", "keepalive_id", "keepalive_payload", "keepalive_interval_ms", "keepalive_format", "keepalive_fd", "keepalive_listen", "keepalive_listen_timeout", "keepalive_check_message"}
 KEEPALIVE_CLI_KEYS = {"preset", "fd", "arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"}
 FDCHECK_KEYS = {"campaign", "output_dir", "probe_timeout", "probe_delay_ms", "probe_lengths"}
-SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only", "isotp", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id"}
+SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only", "isotp", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout"}
 FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
     "can": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "id_min", "id_max", "diagnostic_bias", "extended_probability", "include_remote", "include_error", "progress_interval", "progress_seconds"},
     "dbc": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "dbc_file", "progress_interval", "progress_seconds"},

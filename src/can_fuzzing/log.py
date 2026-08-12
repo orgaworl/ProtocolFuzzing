@@ -566,6 +566,33 @@ def print_isotp_nodes_table(nodes: list[dict[str, Any]]) -> None:
     for row in rows:
         debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
 
+
+def print_isotp_protocols_table(protocols: list[dict[str, Any]]) -> None:
+    if not protocols:
+        log_structured("warning", "isotp_protocols", {"count": 0, "result": "none"})
+        return
+
+    headers = ["request_id", "response_id", "uds", "obd", "evidence"]
+    rows = [
+        [
+            str(item.get("request_id", "")),
+            str(item.get("response_id", "")),
+            format_bool(bool(item.get("uds", False))),
+            format_bool(bool(item.get("obd", False))),
+            str(item.get("evidence", "")),
+        ]
+        for item in protocols
+    ]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+    log_structured("debug", "isotp_protocols", {"count": len(protocols)})
+    debug("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    debug("  ".join("-" * width for width in widths))
+    for row in rows:
+        debug("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+
 def format_interface_row(config: dict[str, Any]) -> list[str]:
     return [
         str(config.get("interface", "")),

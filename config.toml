@@ -70,6 +70,8 @@ isotp_request_id_end = 0x7e7
 isotp_sniff_time = 0.1
 isotp_verify_results = true
 isotp_extended_can_id = false
+isotp_protocol_probe = true
+isotp_protocol_probe_timeout = 0.2
 no_progress = false
 
 [udsfuzz]

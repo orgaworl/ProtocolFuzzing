@@ -34,6 +34,7 @@ from .log import (
     print_interface_table,
     print_scan_objects_table,
     print_isotp_nodes_table,
+    print_isotp_protocols_table,
     print_status_line,
     print_status_value,
     status_level,
@@ -269,6 +270,8 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
             sniff_time=args.isotp_sniff_time,
             verify_results=args.isotp_verify_results,
             extended_can_id=args.isotp_extended_can_id,
+            protocol_probe=args.isotp_protocol_probe,
+            protocol_probe_timeout=args.isotp_protocol_probe_timeout,
         )
         log_structured("info", "isotp_scan", {"request_id_start": f"0x{isotp_config.request_id_start:x}", "request_id_end": f"0x{isotp_config.request_id_end:x}", "sniff_time": isotp_config.sniff_time})
         try:
@@ -276,9 +279,10 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
         except CANConnectionError as exc:
             log_structured("error", "error", {"message": exc})
             raise SystemExit(2) from exc
-        log_structured("info", "isotp_nodes", {"count": isotp_summary["node_count"]})
-        log_structured("info", "files", {"isotp_nodes_csv": isotp_summary["nodes_csv_path"]})
+        log_structured("info", "isotp_nodes", {"count": isotp_summary["node_count"], "uds": isotp_summary["uds_node_count"], "obd": isotp_summary["obd_node_count"]})
+        log_structured("info", "files", {"isotp_nodes_csv": isotp_summary["nodes_csv_path"], "isotp_protocols_csv": isotp_summary["protocols_csv_path"]})
         print_isotp_nodes_table(isotp_summary.get("nodes", []))
+        print_isotp_protocols_table(isotp_summary.get("protocols", []))
 
 
 def run_fdcheck_from_args(args: SimpleNamespace) -> None:
