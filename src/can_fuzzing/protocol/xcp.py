@@ -3,7 +3,6 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from ..fuzzing.utils import random_bytes
 from .dictionary import COMMON_CAN_IDS
 
 
@@ -67,25 +66,31 @@ XCP_COMMAND_NAMES = {
 }
 XCP_COMMAND_POOL = tuple(XCP_COMMAND_NAMES)
 
-XCP_ERROR_NAMES = {
-    0x10: 'ERR_CMD_BUSY',
-    0x11: 'ERR_DAQ_ACTIVE',
-    0x12: 'ERR_PGM_ACTIVE',
-    0x20: 'ERR_CMD_UNKNOWN',
-    0x21: 'ERR_CMD_SYNTAX',
-    0x22: 'ERR_OUT_OF_RANGE',
-    0x23: 'ERR_WRITE_PROTECTED',
-    0x24: 'ERR_ACCESS_DENIED',
-    0x25: 'ERR_ACCESS_LOCKED',
-    0x26: 'ERR_PAGE_NOT_VALID',
-    0x27: 'ERR_MODE_NOT_VALID',
-    0x28: 'ERR_SEGMENT_NOT_VALID',
-    0x29: 'ERR_SEQUENCE',
-    0x2A: 'ERR_DAQ_CONFIG',
-    0x30: 'ERR_MEMORY_OVERFLOW',
-    0x31: 'ERR_GENERIC',
-    0x32: 'ERR_VERIFY',
+XCP_ERROR_DESCRIPTIONS = {
+    0x00: ('ERR_CMD_SYNC', 'Command processor synchronisation.'),
+    0x10: ('ERR_CMD_BUSY', 'Command was not executed.'),
+    0x11: ('ERR_DAQ_ACTIVE', 'Command rejected because DAQ is running.'),
+    0x12: ('ERR_PGM_ACTIVE', 'Command rejected because PGM is running.'),
+    0x20: ('ERR_CMD_UNKNOWN', 'Unknown command or not implemented optional command.'),
+    0x21: ('ERR_CMD_SYNTAX', 'Command syntax invalid.'),
+    0x22: ('ERR_OUT_OF_RANGE', 'Command parameter is out of range.'),
+    0x23: ('ERR_WRITE_PROTECTED', 'The memory location is write protected.'),
+    0x24: ('ERR_ACCESS_DENIED', 'The memory location is not accessible.'),
+    0x25: ('ERR_ACCESS_LOCKED', 'Access denied, seed and key is required.'),
+    0x26: ('ERR_PAGE_NOT_VALID', 'Selected page not available.'),
+    0x27: ('ERR_MODE_NOT_VALID', 'Selected mode not available.'),
+    0x28: ('ERR_SEGMENT_NOT_VALID', 'Selected segment not valid.'),
+    0x29: ('ERR_SEQUENCE', 'Sequence error.'),
+    0x2A: ('ERR_DAQ_CONFIG', 'DAQ configuration not valid.'),
+    0x30: ('ERR_MEMORY_OVERFLOW', 'Memory overflow error.'),
+    0x31: ('ERR_GENERIC', 'Generic error.'),
+    0x32: ('ERR_VERIFY', 'The slave internal program verify routine detects an error.'),
 }
+
+XCP_RESOURCE_BITS = ('CAL/PAG', 'RESERVED_1', 'DAQ', 'STIM', 'PGM', 'RESERVED_5', 'RESERVED_6', 'RESERVED_7')
+XCP_COMM_MODE_BASIC_BITS = ('BYTE_ORDER', 'ADDRESS_GRANULARITY_0', 'ADDRESS_GRANULARITY_1', 'RESERVED_3', 'RESERVED_4', 'RESERVED_5', 'SLAVE_BLOCK_MODE', 'OPTIONAL')
+XCP_COMM_MODE_OPTIONAL_BITS = ('MASTER_BLOCK_MODE', 'INTERLEAVED_MODE', 'RESERVED_2', 'RESERVED_3', 'RESERVED_4', 'RESERVED_5', 'RESERVED_6', 'RESERVED_7')
+XCP_SESSION_STATUS_BITS = ('STORE_CAL_REQ', 'RESERVED_1', 'STORE_DAQ_REQ', 'CLEAR_DAQ_REQ', 'RESERVED_4', 'RESERVED_5', 'DAQ_RUNNING', 'RESUME')
 
 
 @dataclass(frozen=True)
@@ -98,13 +103,55 @@ class XCPRequest:
 
 
 @dataclass(frozen=True)
+class XCPConnectInfo:
+    resource_mask: int
+    comm_mode_basic: int
+    max_cto: int
+    max_dto: int
+    protocol_layer_version: int
+    transport_layer_version: int
+    address_granularity: int
+
+
+@dataclass(frozen=True)
+class XCPStatusInfo:
+    session_status: int
+    resource_mask: int
+    reserved: int
+    session_configuration_id: int
+
+
+@dataclass(frozen=True)
+class XCPCommModeInfo:
+    reserved_1: int
+    comm_mode_optional: int
+    reserved_2: int
+    max_bs: int
+    min_st: int
+    queue_size: int
+    driver_version: int
+
+
+@dataclass(frozen=True)
+class XCPIdInfo:
+    mode: int | None
+    identifier: bytes
+
+
+@dataclass(frozen=True)
 class XCPResponseFrame:
     frame_kind: str
     payload: bytes
+    command_code: int | None = None
     response_code: int | None = None
+    error_code: int | None = None
     error_name: str | None = None
     positive: bool = False
     negative: bool = False
+    connect_info: XCPConnectInfo | None = None
+    status_info: XCPStatusInfo | None = None
+    comm_mode_info: XCPCommModeInfo | None = None
+    id_info: XCPIdInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -123,20 +170,30 @@ class XCPProtocol:
     def decode_response(self, raw: bytes, request_command: int) -> XCPResponseFrame:
         if not raw:
             return XCPResponseFrame(frame_kind='empty', payload=b'')
-        response_code = raw[0]
-        if response_code == 0xFF and len(raw) >= 2 and raw[1] == request_command:
-            return XCPResponseFrame(frame_kind='positive_response', payload=raw, response_code=response_code, positive=True)
-        if response_code == 0xFE and len(raw) >= 2:
-            error_code = raw[1]
-            return XCPResponseFrame(
-                frame_kind='negative_response',
-                payload=raw,
-                response_code=response_code,
-                error_name=XCP_ERROR_NAMES.get(error_code, f'ERR_0x{error_code:02x}'),
-                negative=True,
-            )
-        return XCPResponseFrame(frame_kind=f'response_0x{response_code:02x}', payload=raw, response_code=response_code)
+        if len(raw) < 2:
+            return XCPResponseFrame(frame_kind='truncated', payload=raw, response_code=raw[0])
 
+        response_code = raw[0]
+        if response_code == 0xFE:
+            return self._decode_error(raw)
+        if response_code != 0xFF:
+            return XCPResponseFrame(frame_kind=f'response_0x{response_code:02x}', payload=raw, response_code=response_code)
+
+        if request_command == 0xFF:
+            return self._decode_connect_response(raw)
+        if request_command == 0xFD:
+            return self._decode_get_status_response(raw)
+        if request_command == 0xFB:
+            return self._decode_get_comm_mode_info_response(raw)
+        if request_command == 0xFA:
+            return self._decode_get_id_response(raw)
+        return XCPResponseFrame(
+            frame_kind='positive_response',
+            payload=raw,
+            command_code=request_command,
+            response_code=response_code,
+            positive=True,
+        )
     def summarize_responses(self, response_payloads: list[str], request_command: int) -> XCPResponseSummary:
         positive = 0
         negative = 0
@@ -152,6 +209,100 @@ class XCPProtocol:
             else:
                 kind = response.frame_kind
         return XCPResponseSummary(positive=positive, negative=negative, kind=kind)
+
+    def _decode_error(self, raw: bytes) -> XCPResponseFrame:
+        error_code = raw[1]
+        error_name, _ = XCP_ERROR_DESCRIPTIONS.get(error_code, ('UNKNOWN', 'Unknown error'))
+        return XCPResponseFrame(
+            frame_kind='negative_response',
+            payload=raw,
+            response_code=raw[0],
+            error_code=error_code,
+            error_name=error_name,
+            negative=True,
+        )
+
+    def _decode_connect_response(self, raw: bytes) -> XCPResponseFrame:
+        if len(raw) < 8:
+            return XCPResponseFrame(frame_kind='truncated_connect_response', payload=raw, response_code=raw[0])
+        resource_mask = raw[1]
+        comm_mode_basic = raw[2]
+        max_cto = raw[3]
+        max_dto = (raw[5] << 8) | raw[4]
+        protocol_layer_version = raw[6]
+        transport_layer_version = raw[7]
+        address_granularity = 1 << (((comm_mode_basic >> 2) & 0x01) * 2 + ((comm_mode_basic >> 1) & 0x01))
+        return XCPResponseFrame(
+            frame_kind='connect_response',
+            payload=raw,
+            command_code=0xFF,
+            response_code=0xFF,
+            positive=True,
+            connect_info=XCPConnectInfo(
+                resource_mask=resource_mask,
+                comm_mode_basic=comm_mode_basic,
+                max_cto=max_cto,
+                max_dto=max_dto,
+                protocol_layer_version=protocol_layer_version,
+                transport_layer_version=transport_layer_version,
+                address_granularity=address_granularity,
+            ),
+        )
+
+    def _decode_get_status_response(self, raw: bytes) -> XCPResponseFrame:
+        if len(raw) < 8:
+            return XCPResponseFrame(frame_kind='truncated_get_status_response', payload=raw, response_code=raw[0])
+        session_status = raw[1]
+        resource_mask = raw[2]
+        reserved = raw[3]
+        session_configuration_id = 2 ** (((raw[5] & 0x04) * 2) + (raw[4] & 0x02))
+        return XCPResponseFrame(
+            frame_kind='get_status_response',
+            payload=raw,
+            command_code=0xFD,
+            response_code=0xFF,
+            positive=True,
+            status_info=XCPStatusInfo(
+                session_status=session_status,
+                resource_mask=resource_mask,
+                reserved=reserved,
+                session_configuration_id=session_configuration_id,
+            ),
+        )
+
+    def _decode_get_comm_mode_info_response(self, raw: bytes) -> XCPResponseFrame:
+        if len(raw) < 8:
+            return XCPResponseFrame(frame_kind='truncated_get_comm_mode_info_response', payload=raw, response_code=raw[0])
+        return XCPResponseFrame(
+            frame_kind='get_comm_mode_info_response',
+            payload=raw,
+            command_code=0xFB,
+            response_code=0xFF,
+            positive=True,
+            comm_mode_info=XCPCommModeInfo(
+                reserved_1=raw[1],
+                comm_mode_optional=raw[2],
+                reserved_2=raw[3],
+                max_bs=raw[4],
+                min_st=raw[5],
+                queue_size=raw[6],
+                driver_version=raw[7],
+            ),
+        )
+
+    def _decode_get_id_response(self, raw: bytes) -> XCPResponseFrame:
+        if len(raw) < 3:
+            return XCPResponseFrame(frame_kind='truncated_get_id_response', payload=raw, response_code=raw[0])
+        mode = raw[2]
+        identifier = raw[3:]
+        return XCPResponseFrame(
+            frame_kind='get_id_response',
+            payload=raw,
+            command_code=0xFA,
+            response_code=0xFF,
+            positive=True,
+            id_info=XCPIdInfo(mode=mode, identifier=identifier),
+        )
 
 
 _XCP_PROTOCOL = XCPProtocol()

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import random
 from dataclasses import dataclass
@@ -6,6 +6,23 @@ from dataclasses import dataclass
 from ..fuzzing.utils import random_bytes
 from .dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
 from .isotp import IsoTp, decode_isotp_payload, encode_isotp_single_frame
+
+
+OBD_SUPPORTED_PID_MODES = {0x01, 0x02, 0x05, 0x06, 0x08, 0x09}
+
+
+@dataclass(frozen=True)
+class OBDPidInfo:
+    mode: int
+    pid: int
+    value: bytes
+    supports_bits: bytes | None = None
+
+
+@dataclass(frozen=True)
+class OBDNegativeInfo:
+    request_mode: int
+    nrc: int
 
 
 @dataclass(frozen=True)
@@ -26,6 +43,8 @@ class OBDResponseFrame:
     service_id: int | None = None
     positive: bool = False
     negative: bool = False
+    pid_info: OBDPidInfo | None = None
+    negative_info: OBDNegativeInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -44,20 +63,32 @@ class OBDProtocol:
 
     def decode_response(self, raw: bytes, request_mode: int) -> OBDResponseFrame:
         frame_kind, app_payload = decode_isotp_payload(raw)
-        if frame_kind != "single_frame" or not app_payload:
+        if frame_kind != 'single_frame' or not app_payload:
             return OBDResponseFrame(frame_kind=frame_kind, payload=app_payload)
         service = app_payload[0]
         expected_positive = (request_mode + 0x40) & 0xFF
         if service == expected_positive:
-            return OBDResponseFrame(frame_kind="positive_response", payload=app_payload, service_id=service, positive=True)
-        if service == 0x7F:
-            return OBDResponseFrame(frame_kind="negative_response", payload=app_payload, service_id=service, negative=True)
-        return OBDResponseFrame(frame_kind=f"service_0x{service:02x}", payload=app_payload, service_id=service)
+            return OBDResponseFrame(
+                frame_kind='positive_response',
+                payload=app_payload,
+                service_id=service,
+                positive=True,
+                pid_info=decode_positive_info(app_payload, request_mode),
+            )
+        if service == 0x7F and len(app_payload) >= 3:
+            return OBDResponseFrame(
+                frame_kind='negative_response',
+                payload=app_payload,
+                service_id=service,
+                negative=True,
+                negative_info=OBDNegativeInfo(request_mode=app_payload[1], nrc=app_payload[2]),
+            )
+        return OBDResponseFrame(frame_kind=f'service_0x{service:02x}', payload=app_payload, service_id=service)
 
     def summarize_responses(self, response_payloads: list[str], request_mode: int) -> OBDResponseSummary:
         positive = 0
         negative = 0
-        kind = "no_response"
+        kind = 'no_response'
         for raw_hex in response_payloads:
             response = self.decode_response(bytes.fromhex(raw_hex), request_mode)
             if response.positive:
@@ -72,6 +103,15 @@ class OBDProtocol:
 
 
 _OBD_PROTOCOL = OBDProtocol()
+
+
+def decode_positive_info(payload: bytes, request_mode: int) -> OBDPidInfo:
+    if request_mode in OBD_SUPPORTED_PID_MODES and len(payload) >= 2:
+        pid = payload[1]
+        value = payload[2:]
+        supports_bits = value if pid == 0x00 else None
+        return OBDPidInfo(mode=request_mode, pid=pid, value=value, supports_bits=supports_bits)
+    return OBDPidInfo(mode=request_mode, pid=payload[1] if len(payload) >= 2 else 0x00, value=payload[2:])
 
 
 def build_request(rng: random.Random, config) -> OBDRequest:
@@ -91,7 +131,7 @@ def build_request(rng: random.Random, config) -> OBDRequest:
         request_id=request_id,
         request_mode=request_mode,
         obd_mode=obd_mode,
-        mode_name=OBD_MODE_NAMES.get(obd_mode, f"mode_0x{obd_mode:02x}"),
+        mode_name=OBD_MODE_NAMES.get(obd_mode, f'mode_0x{obd_mode:02x}'),
         pid=pid,
         application_payload=payload,
         is_malformed=malformed,
@@ -99,13 +139,13 @@ def build_request(rng: random.Random, config) -> OBDRequest:
 
 
 def choose_request_mode(rng: random.Random, config) -> str:
-    if config.request_mode in {"functional", "physical"}:
+    if config.request_mode in {'functional', 'physical'}:
         return config.request_mode
-    return rng.choices(["functional", "physical"], weights=[0.8, 0.2], k=1)[0]
+    return rng.choices(['functional', 'physical'], weights=[0.8, 0.2], k=1)[0]
 
 
 def choose_request_id(rng: random.Random, request_mode: str, config) -> int:
-    if request_mode == "functional":
+    if request_mode == 'functional':
         return config.functional_id
     return rng.randint(config.physical_start, config.physical_end)
 
@@ -123,7 +163,7 @@ def choose_pid(rng: random.Random, config) -> int:
 
 
 def mode_uses_pid(obd_mode: int) -> bool:
-    return obd_mode in {0x01, 0x02, 0x05, 0x06, 0x08, 0x09}
+    return obd_mode in OBD_SUPPORTED_PID_MODES
 
 
 def build_obd_payload(obd_mode: int, pid: int | None) -> bytes:
@@ -134,4 +174,4 @@ def build_obd_payload(obd_mode: int, pid: int | None) -> bytes:
 
 def summarize_responses(response_payloads: list[str], request_mode: int) -> dict[str, int | str]:
     summary = _OBD_PROTOCOL.summarize_responses(response_payloads, request_mode)
-    return {"positive": summary.positive, "negative": summary.negative, "kind": summary.kind}
+    return {'positive': summary.positive, 'negative': summary.negative, 'kind': summary.kind}
