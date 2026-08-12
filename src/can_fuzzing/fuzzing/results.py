@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -133,3 +133,27 @@ def fieldnames_for(protocol: str) -> list[str]:
 
 def write_json_summary(path: Path, summary: dict[str, Any]) -> None:
     path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+
+def build_common_summary(config: Any, csv_path: Path, sent: int, faults: int, responses: int, completed_cases: int, interrupted: bool) -> dict[str, Any]:
+    denominator = completed_cases or 1
+    return {
+        "campaign": config.campaign,
+        "status": "interrupted" if interrupted else "completed",
+        "interrupted": interrupted,
+        "cases": config.cases,
+        "requested_cases": config.cases,
+        "completed_cases": completed_cases,
+        "seed": config.seed,
+        "interface": config.hardware.interface,
+        "channel": config.hardware.channel,
+        "bitrate": config.hardware.bitrate,
+        "fd": config.hardware.fd,
+        "sent": sent,
+        "faults": faults,
+        "responses": responses,
+        "send_rate": sent / denominator,
+        "fault_rate": faults / denominator,
+        "response_rate": responses / denominator,
+        "csv_path": str(csv_path),
+    }

@@ -11,7 +11,7 @@ from ..protocol.uds import build_request, summarize_responses
 from ..runtime.keepalive import KeepaliveConfig
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
-from .results import fieldnames_for, write_json_summary
+from .results import build_common_summary, fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
 
@@ -256,8 +256,8 @@ def write_summary(
     nrcs_seen: set[str],
     coverage: set[str],
 ) -> None:
-    denominator = completed_cases or 1
-    summary = {
+    summary = build_common_summary(config, csv_path, sent, faults, responses, completed_cases, interrupted)
+    summary.update({
         "campaign": config.campaign,
         "status": "interrupted" if interrupted else "completed",
         "interrupted": interrupted,
@@ -287,5 +287,5 @@ def write_summary(
         "unique_nrcs": len(nrcs_seen),
         "coverage_points": len(coverage),
         "csv_path": str(csv_path),
-    }
+    })
     write_json_summary(summary_path, summary)
