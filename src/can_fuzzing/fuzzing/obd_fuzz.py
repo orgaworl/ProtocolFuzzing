@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import random
 import time
@@ -9,10 +8,10 @@ from pathlib import Path
 
 from ..protocol.isotp import encode_isotp_single_frame
 from ..protocol.obd import build_request, summarize_responses
-from ..runtime.adapters import CANHardwareAdapter
-from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
+from ..runtime.keepalive import KeepaliveConfig
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
+from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
 
 
@@ -71,22 +70,14 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with CANHardwareAdapter(config.hardware) as adapter, KeepaliveSession(
-        adapter,
-        config.keepalive,
-        config.output_dir / f"{config.campaign}_keepalive.csv",
-        progress_callback,
-    ), csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=result_fieldnames())
-        writer.writeheader()
-        fh.flush()
+    with open_fuzz_run(config, csv_path, result_fieldnames(), progress_callback) as run:
 
         try:
             for case_id in range(config.cases):
                 request = build_request(rng, config)
                 isotp_payload = encode_isotp_single_frame(request.application_payload)
                 frame = CANFrame.from_ints(request.request_id, isotp_payload, FrameFormat.STANDARD, FrameType.DATA)
-                observation = adapter.transact(frame)
+                observation = run.adapter.transact(frame)
 
                 sent += int(observation.sent)
                 faults += int(observation.fault)
@@ -131,7 +122,7 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
                     response_kind=response_summary["kind"],
                 )
 
-                writer.writerow(
+                run.writer.writerow(
                     {
                         "case_id": case_id,
                         "timestamp_ms": case_id,
@@ -157,7 +148,7 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
                     }
                 )
                 completed_cases += 1
-                fh.flush()
+                run.csv_file.flush()
 
                 now = time.monotonic()
                 if should_report_progress(config, completed_cases, now, last_progress):
@@ -180,7 +171,7 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
                     time.sleep(config.inter_request_delay_ms / 1000.0)
         except KeyboardInterrupt:
             interrupted = True
-            fh.flush()
+            run.csv_file.flush()
             report_progress(
                 progress_callback,
                 campaign=config.campaign,

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import csv
 import json
 import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..runtime.adapters import CANHardwareAdapter
+from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
-from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
+from ..runtime.keepalive import KeepaliveConfig
 from ..protocol.dictionary import COMMON_CAN_IDS, COMMON_CLASSIC_LENGTHS, COMMON_DIAGNOSTIC_TEMPLATES, COMMON_DIAGNOSTIC_TEMPLATES_FD, COMMON_FD_LENGTHS
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
@@ -78,22 +77,14 @@ def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None =
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with CANHardwareAdapter(config.hardware) as adapter, KeepaliveSession(
-        adapter,
-        config.keepalive,
-        config.output_dir / f"{config.campaign}_keepalive.csv",
-        progress_callback,
-    ), csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=result_fieldnames())
-        writer.writeheader()
-        fh.flush()
+    with open_fuzz_run(config, csv_path, result_fieldnames(), progress_callback) as run:
 
         try:
             current_timestamp_ms = 0
             for case_id in range(config.cases):
                 frame = generate_frame(rng, case_id, current_timestamp_ms, config)
                 current_timestamp_ms = frame.timestamp_ms
-                observation = adapter.transact(frame)
+                observation = run.adapter.transact(frame)
 
                 sent += int(observation.sent)
                 faults += int(observation.fault)
@@ -123,7 +114,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None =
                     error=observation.error,
                 )
 
-                writer.writerow(
+                run.writer.writerow(
                     {
                         "case_id": case_id,
                         "timestamp_ms": frame.timestamp_ms,
@@ -146,7 +137,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None =
                     }
                 )
                 completed_cases += 1
-                fh.flush()
+                run.csv_file.flush()
 
                 now = time.monotonic()
                 if should_report_progress(config, completed_cases, now, last_progress):
@@ -167,7 +158,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None =
                     time.sleep(config.inter_frame_delay_ms / 1000.0)
         except KeyboardInterrupt:
             interrupted = True
-            fh.flush()
+            run.csv_file.flush()
             report_progress(
                 progress_callback,
                 campaign=config.campaign,

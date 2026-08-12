@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import random
 import time
@@ -8,10 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..protocol.private_control import build_request
-from ..runtime.adapters import CANHardwareAdapter
-from ..runtime.keepalive import KeepaliveConfig, KeepaliveSession
+from ..runtime.keepalive import KeepaliveConfig
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
+from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
 
 
@@ -68,15 +67,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with CANHardwareAdapter(config.hardware) as adapter, KeepaliveSession(
-        adapter,
-        config.keepalive,
-        config.output_dir / f"{config.campaign}_keepalive.csv",
-        progress_callback,
-    ), csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=result_fieldnames())
-        writer.writeheader()
-        fh.flush()
+    with open_fuzz_run(config, csv_path, result_fieldnames(), progress_callback) as run:
 
         try:
             for case_id in range(config.cases):
@@ -88,7 +79,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
                     frame_type=FrameType.DATA,
                     timestamp_ms=case_id,
                 )
-                observation = adapter.transact(frame)
+                observation = run.adapter.transact(frame)
 
                 sent += int(observation.sent)
                 faults += int(observation.fault)
@@ -123,7 +114,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
                     payload=request.payload.hex(),
                 )
 
-                writer.writerow(
+                run.writer.writerow(
                     {
                         "case_id": case_id,
                         "timestamp_ms": case_id,
@@ -146,7 +137,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
                     }
                 )
                 completed_cases += 1
-                fh.flush()
+                run.csv_file.flush()
 
                 now = time.monotonic()
                 if should_report_progress(config, completed_cases, now, last_progress):
@@ -167,7 +158,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
                     time.sleep(config.inter_request_delay_ms / 1000.0)
         except KeyboardInterrupt:
             interrupted = True
-            fh.flush()
+            run.csv_file.flush()
             report_progress(
                 progress_callback,
                 campaign=config.campaign,
