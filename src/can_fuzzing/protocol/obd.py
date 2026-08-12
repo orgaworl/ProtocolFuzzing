@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import random
 from dataclasses import dataclass
 
 from ..fuzzing.utils import random_bytes
 from .dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
-from .isotp import decode_isotp_payload, encode_isotp_single_frame
+from .isotp import IsoTp, decode_isotp_payload, encode_isotp_single_frame
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,61 @@ class OBDRequest:
     pid: int | None
     application_payload: bytes
     is_malformed: bool
+
+
+@dataclass(frozen=True)
+class OBDResponseFrame:
+    frame_kind: str
+    payload: bytes
+    service_id: int | None = None
+    positive: bool = False
+    negative: bool = False
+
+
+@dataclass(frozen=True)
+class OBDResponseSummary:
+    positive: int
+    negative: int
+    kind: str
+
+
+class OBDProtocol:
+    def __init__(self, padding_value: int | None = 0x00) -> None:
+        self._isotp = IsoTp(padding_value=padding_value)
+
+    def encode_request_frames(self, application_payload: bytes) -> list[bytes]:
+        return self._isotp.segment_message(application_payload)
+
+    def decode_response(self, raw: bytes, request_mode: int) -> OBDResponseFrame:
+        frame_kind, app_payload = decode_isotp_payload(raw)
+        if frame_kind != "single_frame" or not app_payload:
+            return OBDResponseFrame(frame_kind=frame_kind, payload=app_payload)
+        service = app_payload[0]
+        expected_positive = (request_mode + 0x40) & 0xFF
+        if service == expected_positive:
+            return OBDResponseFrame(frame_kind="positive_response", payload=app_payload, service_id=service, positive=True)
+        if service == 0x7F:
+            return OBDResponseFrame(frame_kind="negative_response", payload=app_payload, service_id=service, negative=True)
+        return OBDResponseFrame(frame_kind=f"service_0x{service:02x}", payload=app_payload, service_id=service)
+
+    def summarize_responses(self, response_payloads: list[str], request_mode: int) -> OBDResponseSummary:
+        positive = 0
+        negative = 0
+        kind = "no_response"
+        for raw_hex in response_payloads:
+            response = self.decode_response(bytes.fromhex(raw_hex), request_mode)
+            if response.positive:
+                positive += 1
+                kind = response.frame_kind
+            elif response.negative:
+                negative += 1
+                kind = response.frame_kind
+            else:
+                kind = response.frame_kind
+        return OBDResponseSummary(positive=positive, negative=negative, kind=kind)
+
+
+_OBD_PROTOCOL = OBDProtocol()
 
 
 def build_request(rng: random.Random, config) -> OBDRequest:
@@ -78,26 +133,5 @@ def build_obd_payload(obd_mode: int, pid: int | None) -> bytes:
 
 
 def summarize_responses(response_payloads: list[str], request_mode: int) -> dict[str, int | str]:
-    positive = 0
-    negative = 0
-    kind = "no_response"
-    expected_positive = (request_mode + 0x40) & 0xFF
-    for raw_hex in response_payloads:
-        raw = bytes.fromhex(raw_hex)
-        frame_kind, app_payload = decode_isotp_payload(raw)
-        if frame_kind != "single_frame" or not app_payload:
-            kind = frame_kind
-            continue
-        service = app_payload[0]
-        if service == expected_positive:
-            positive += 1
-            kind = "positive_response"
-        elif service == 0x7F:
-            negative += 1
-            kind = "negative_response"
-        else:
-            kind = f"service_0x{service:02x}"
-    return {"positive": positive, "negative": negative, "kind": kind}
-
-
-
+    summary = _OBD_PROTOCOL.summarize_responses(response_payloads, request_mode)
+    return {"positive": summary.positive, "negative": summary.negative, "kind": summary.kind}
