@@ -53,12 +53,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(captured[0].interfaces, ",".join(cli_config.DEFAULT_DISCOVERY_INTERFACES))
         self.assertFalse(captured[0].include_virtual)
 
-    def test_fuzz_click_exposes_shared_keepalive_options(self) -> None:
+    def test_fuzz_click_only_exposes_common_run_options(self) -> None:
         names = {param.name for param in cli._fuzz_click.params}
-        self.assertIn("keepalive", names)
-        self.assertIn("keepalive_id", names)
-        self.assertIn("keepalive_payload", names)
-        self.assertIn("dbc_file", names)
+        self.assertEqual(names, {"config", "protocol", "interface", "channel", "cases", "seed", "keepalive"})
 
 
 
@@ -226,12 +223,12 @@ class CliTests(unittest.TestCase):
             )
             runner = CliRunner()
             with patch.object(cli, "run_fuzz_from_args", lambda args: captured.append(args)):
-                result = runner.invoke(cli._fuzz_click, ["-c", str(config_path), "--cases", "9", "--dbc_file", "from_cli.dbc"], catch_exceptions=False)
+                result = runner.invoke(cli._fuzz_click, ["-c", str(config_path), "--cases", "9"], catch_exceptions=False)
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0].protocol, "dbc")
         self.assertEqual(captured[0].cases, 9)
-        self.assertEqual(captured[0].dbc_file, "from_cli.dbc")
+        self.assertEqual(captured[0].dbc_file, "from_config.dbc")
         self.assertFalse(hasattr(captured[0], "interface"))
 
     def test_resolve_interface_auto_selects_single_detection(self) -> None:
