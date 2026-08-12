@@ -107,6 +107,7 @@ FUZZ_PROTOCOL_ALIASES = {
     "privatefuzz": "private",
     "udsfuzz": "uds",
     "obdfuzz": "obd",
+    "xcpfuzz": "xcp",
 }
 FUZZ_PROTOCOL_SECTION_MAP = {
     "can": None,
@@ -114,6 +115,7 @@ FUZZ_PROTOCOL_SECTION_MAP = {
     "uds": "udsfuzz",
     "obd": "obdfuzz",
     "private": "privatefuzz",
+    "xcp": "xcpfuzz",
 }
 FUZZ_PROTOCOL_CAMPAIGNS = {
     "can": "can_baseline",
@@ -121,6 +123,7 @@ FUZZ_PROTOCOL_CAMPAIGNS = {
     "uds": "uds_baseline",
     "obd": "obd_baseline",
     "private": "private_control_baseline",
+    "xcp": "xcp_baseline",
 }
 
 
@@ -144,9 +147,9 @@ def normalize_keepalive_preset(value: str | None) -> str | None:
 
 def parse_protocol(value: str) -> str:
     normalized = normalize_protocol(value)
-    if normalized in {"can", "dbc", "uds", "obd", "private"}:
+    if normalized in {"can", "dbc", "uds", "obd", "private", "xcp"}:
         return normalized
-    raise click.BadParameter("protocol must be one of: can, dbc, uds, obd, private")
+    raise click.BadParameter("protocol must be one of: can, dbc, uds, obd, private, xcp")
 
 
 def parse_int(value: str) -> int:
@@ -253,6 +256,7 @@ FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
     "uds": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "service_bias", "malformed_rate", "progress_interval", "progress_seconds"},
     "obd": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "pid_bias", "malformed_rate", "progress_interval", "progress_seconds"},
     "private": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "target_ids", "opcodes", "structured_rate", "malformed_rate", "min_payload_len", "max_payload_len", "extended", "progress_interval", "progress_seconds"},
+    "xcp": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "target_ids", "request_ids", "request_modes", "request_mix", "malformed_rate", "progress_interval", "progress_seconds"},
 }
 
 CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "keepalive_id", "arbitration_id"}

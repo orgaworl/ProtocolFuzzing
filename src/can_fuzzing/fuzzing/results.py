@@ -97,6 +97,28 @@ OBD_CASE_FIELDS = [
     "coverage_count",
 ]
 
+XCP_CASE_FIELDS = [
+    "case_id",
+    "timestamp_ms",
+    "request_id",
+    "request_mode",
+    "command_code",
+    "command_name",
+    "is_malformed",
+    "payload_hex",
+    "sent",
+    "fault",
+    "response_count",
+    "response_ids",
+    "response_payloads",
+    "positive_responses",
+    "negative_responses",
+    "response_kind",
+    "latency_ms",
+    "error",
+    "coverage_count",
+]
+
 PRIVATE_CASE_FIELDS = [
     "case_id",
     "timestamp_ms",
@@ -124,6 +146,7 @@ CASE_FIELDS_BY_PROTOCOL = {
     "uds": UDS_CASE_FIELDS,
     "obd": OBD_CASE_FIELDS,
     "private": PRIVATE_CASE_FIELDS,
+    "xcp": XCP_CASE_FIELDS,
 }
 
 

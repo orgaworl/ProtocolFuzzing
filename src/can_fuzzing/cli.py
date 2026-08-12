@@ -35,7 +35,7 @@ Options:
   -h, --help            show this help message and exit
   -c CONFIG, --config CONFIG
                         TOML config file; command line options override config values
-  --protocol PROTOCOL   fuzzing protocol: can, dbc, uds, obd, or private
+  --protocol PROTOCOL   fuzzing protocol: can, dbc, uds, obd, private, or xcp
   --interface INTERFACE python-can interface, for example pcan, vector, slcan, socketcan
   --channel CHANNEL     CAN channel name used by the selected python-can interface
   --cases CASES         number of generated requests or frames
@@ -69,7 +69,7 @@ def invoke_click(command: click.Command, prog_name: str) -> None:
 
 FUZZ_OPTIONS = [
     COMMON_CONFIG_OPTION,
-    (("--protocol",), {"default": None, "help": "fuzzing protocol: can, dbc, uds, obd, or private"}),
+    (("--protocol",), {"default": None, "help": "fuzzing protocol: can, dbc, uds, obd, private, or xcp"}),
     (("--interface",), {"default": None, "help": "python-can interface"}),
     (("--channel",), {"default": None, "help": "python-can channel"}),
     (("--cases",), {"type": int, "default": None, "help": "number of generated requests or frames"}),

@@ -20,6 +20,7 @@ from .fuzzing.dbc_fuzz import DBCFuzzConfig, run_dbc_fuzzing
 from .fuzzing.obd_fuzz import OBDFuzzConfig, run_obd_fuzzing
 from .fuzzing.private_control_fuzz import PrivateFuzzConfig, run_private_fuzzing
 from .fuzzing.uds_fuzz import UDSFuzzConfig, run_uds_fuzzing
+from .fuzzing.xcp_fuzz import XCPFuzzConfig, run_xcp_fuzzing
 from .scanning.can_id_scan import ScanConfig, run_scan
 from .command_support import discover_interfaces, resolve_hardware
 from .log import (
@@ -56,6 +57,9 @@ def run_fuzz_from_args(args: SimpleNamespace) -> None:
         return
     if protocol == "private":
         run_privatefuzz_from_args(args)
+        return
+    if protocol == "xcp":
+        run_xcpfuzz_from_args(args)
         return
     raise SystemExit(f"unsupported protocol: {protocol}")
 
@@ -128,6 +132,40 @@ def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
     log_structured("debug", "coverage", {"messages": result.unique_messages, "signals": result.unique_signals, "points": result.coverage_points})
     log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
+
+
+
+def run_xcpfuzz_from_args(args: SimpleNamespace) -> None:
+    hardware = resolve_hardware(args, "fuzz")
+    config = XCPFuzzConfig(
+        hardware=hardware,
+        cases=args.cases,
+        seed=args.seed,
+        campaign=args.campaign,
+        output_dir=Path(args.output_dir),
+        inter_request_delay_ms=args.inter_request_delay_ms,
+        target_ids=tuple(args.target_ids),
+        request_ids=tuple(getattr(args, "request_ids", ()) or ()),
+        request_modes=tuple(getattr(args, "request_modes", ()) or ()),
+        request_mix=float(getattr(args, "request_mix", 0.5)),
+        malformed_rate=args.malformed_rate,
+        progress_interval=args.progress_interval,
+        progress_seconds=args.progress_seconds,
+        keepalive=build_fuzz_keepalive_config(args),
+    )
+    start_run_summary("fuzz", "xcp", config.campaign, config.cases)
+    log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "cases": config.cases})
+    log_shared_keepalive_config(config.keepalive, config.output_dir / f"{config.campaign}_keepalive.csv")
+    try:
+        result = run_xcp_fuzzing(config, progress_callback=log_can_event)
+    except CANConnectionError as exc:
+        log_structured("error", "error", {"message": exc})
+        raise SystemExit(2) from exc
+    log_structured("info", "campaign", {"name": result.campaign})
+    print_status_line(result.interrupted)
+    log_structured("info", "summary", {"cases": f"{result.completed_cases}/{result.cases}", "sent": result.sent, "faults": result.faults, "responses": result.responses})
+    log_structured("debug", "coverage", {"commands": result.unique_commands, "targets": result.unique_targets})
+    log_structured("info", "files", {"csv": result.csv_path, "summary": result.summary_path})
 
 def run_keepalive_from_args(args: SimpleNamespace) -> None:
     hardware = resolve_hardware(args, "keepalive")
