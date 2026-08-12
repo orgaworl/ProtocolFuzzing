@@ -1,9 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import random
 from dataclasses import dataclass
 
 from .dictionary import PRIVATE_OPCODES, PRIVATE_TARGET_IDS
+from .scapy_backend import raw_payload
 
 
 @dataclass(frozen=True)
@@ -33,24 +34,22 @@ def build_request(rng: random.Random, config, case_id: int) -> PrivateControlReq
 
 def build_structured_payload(rng: random.Random, config, opcode: int, case_id: int) -> bytes:
     length = clamp_payload_length(config, rng.choice([4, 5, 6, 7, 8, 12, 16]))
-    payload = bytearray([opcode & 0xFF])
+    data: list[int] = []
     if length >= 2:
-        payload.append(case_id & 0xFF)
+        data.append(case_id & 0xFF)
     if length >= 3:
-        payload.append(rng.randrange(0x00, 0x100))
+        data.append(rng.randrange(0x00, 0x100))
     if length >= 4:
-        payload.append(length & 0xFF)
-    while len(payload) < length:
-        payload.append(rng.choice([0x00, 0x01, 0x7F, 0x80, 0xFE, 0xFF, rng.randrange(0x00, 0x100)]))
-    return bytes(payload)
+        data.append(length & 0xFF)
+    while len(data) < max(0, length - 1):
+        data.append(rng.choice([0x00, 0x01, 0x7F, 0x80, 0xFE, 0xFF, rng.randrange(0x00, 0x100)]))
+    return raw_payload(opcode, bytes(data))
 
 
 def build_random_payload(rng: random.Random, config, opcode: int) -> bytes:
     length = random_payload_length(rng, config)
-    payload = bytearray([opcode & 0xFF])
-    while len(payload) < length:
-        payload.append(rng.randrange(0x00, 0x100))
-    return bytes(payload)
+    data = bytes(rng.randrange(0x00, 0x100) for _ in range(max(0, length - 1)))
+    return raw_payload(opcode, data)
 
 
 def build_malformed_payload(rng: random.Random, config, opcode: int) -> bytes:
@@ -60,10 +59,8 @@ def build_malformed_payload(rng: random.Random, config, opcode: int) -> bytes:
     length = clamp_payload_length(config, rng.choice(choices))
     if length == 0:
         return b""
-    payload = bytearray([opcode & 0xFF])
-    while len(payload) < length:
-        payload.append(rng.choice([0x00, 0xFF, rng.randrange(0x00, 0x100)]))
-    return bytes(payload)
+    data = bytes(rng.choice([0x00, 0xFF, rng.randrange(0x00, 0x100)]) for _ in range(max(0, length - 1)))
+    return raw_payload(opcode, data)
 
 
 def random_payload_length(rng: random.Random, config) -> int:

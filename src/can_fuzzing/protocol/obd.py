@@ -1,11 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import random
 from dataclasses import dataclass
 
 from ..fuzzing.utils import random_bytes
 from .dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
-from .isotp import IsoTp, decode_isotp_payload, encode_isotp_single_frame
+from .isotp import IsoTp, decode_isotp_payload
+from .scapy_backend import obd_payload, raw_obd_payload
 
 
 OBD_SUPPORTED_PID_MODES = {0x01, 0x02, 0x05, 0x06, 0x08, 0x09}
@@ -123,7 +124,7 @@ def build_request(rng: random.Random, config) -> OBDRequest:
 
     if malformed:
         payload_length = rng.randint(1, 7)
-        payload = bytes([obd_mode, *random_bytes(rng, payload_length - 1)])
+        payload = raw_obd_payload(obd_mode, random_bytes(rng, payload_length - 1))
     else:
         payload = build_obd_payload(obd_mode, pid)
 
@@ -167,9 +168,7 @@ def mode_uses_pid(obd_mode: int) -> bool:
 
 
 def build_obd_payload(obd_mode: int, pid: int | None) -> bytes:
-    if mode_uses_pid(obd_mode):
-        return bytes([obd_mode, 0x00 if pid is None else pid])
-    return bytes([obd_mode])
+    return obd_payload(obd_mode, 0x00 if mode_uses_pid(obd_mode) and pid is None else pid)
 
 
 def summarize_responses(response_payloads: list[str], request_mode: int) -> dict[str, int | str]:

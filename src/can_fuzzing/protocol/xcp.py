@@ -346,20 +346,16 @@ def choose_request_id(rng: random.Random, config) -> int:
 
 def build_command_payload(rng: random.Random, command_code: int, config) -> bytes:
     length = max(1, min(8, getattr(config, 'max_payload_len', 8)))
-    payload = bytearray([command_code & 0xFF])
-    while len(payload) < length:
-        payload.append(rng.randrange(0x00, 0x100))
-    return bytes(payload)
+    data = bytes(rng.randrange(0x00, 0x100) for _ in range(max(0, length - 1)))
+    return xcp_payload(command_code, data)
 
 
 def build_malformed_payload(rng: random.Random, command_code: int) -> bytes:
     length = rng.randint(0, 8)
     if length == 0:
         return b''
-    payload = bytearray([command_code & 0xFF])
-    while len(payload) < length:
-        payload.append(rng.choice([0x00, 0xFF, rng.randrange(0x00, 0x100)]))
-    return bytes(payload)
+    data = bytes(rng.choice([0x00, 0xFF, rng.randrange(0x00, 0x100)]) for _ in range(max(0, length - 1)))
+    return xcp_payload(command_code, data)
 
 
 def summarize_responses(response_payloads: list[str], request_command: int) -> dict[str, int | str]:

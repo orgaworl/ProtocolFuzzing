@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable
 
+from ..protocol.scapy_backend import build_can_payload
+
 
 class FrameFormat(str, Enum):
     STANDARD = "standard"
@@ -76,7 +78,7 @@ class CANFrame:
     ) -> "CANFrame":
         return cls(
             identifier=identifier,
-            data=bytes(v & 0xFF for v in values),
+            data=build_can_payload(v & 0xFF for v in values),
             frame_format=frame_format,
             frame_type=frame_type,
             timestamp_ms=timestamp_ms,

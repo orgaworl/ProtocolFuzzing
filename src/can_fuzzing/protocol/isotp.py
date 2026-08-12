@@ -1,7 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
+
+from .scapy_backend import encode_isotp_single_payload, segment_isotp_payload
 
 
 @dataclass(frozen=True)
@@ -100,12 +102,7 @@ class IsoTp:
 def encode_isotp_single_frame(application_payload: bytes) -> bytes:
     if len(application_payload) > IsoTp.MAX_SF_LENGTH:
         raise ValueError("payload exceeds classic CAN ISO-TP single-frame capacity")
-    frame = bytearray([len(application_payload) & 0x0F])
-    frame.extend(application_payload)
-    while len(frame) < IsoTp.MAX_FRAME_LENGTH:
-        frame.append(0x00)
-    return bytes(frame)
-
+    return encode_isotp_single_payload(application_payload, padding_value=0x00)
 
 def decode_isotp_payload(raw: bytes) -> tuple[str, bytes]:
     return IsoTp.decode_frame(raw)
@@ -117,51 +114,7 @@ def segment_isotp_message(message: bytes | Iterable[int], padding_value: int | N
         raise ValueError(
             f"Message too long for ISO-TP. Max allowed length is {IsoTp.MAX_MESSAGE_LENGTH} bytes, received {len(payload)} bytes"
         )
-
-    normalized_padding = _normalize_padding_value(padding_value)
-    padding_enabled = normalized_padding is not None
-    pad_byte = 0x00 if normalized_padding is None else normalized_padding
-
-    frame_list: list[bytes] = []
-    message_length = len(payload)
-
-    if message_length <= IsoTp.MAX_SF_LENGTH:
-        if padding_enabled:
-            frame = [pad_byte] * IsoTp.MAX_FRAME_LENGTH
-        else:
-            frame = [pad_byte] * (message_length + 1)
-        frame[0] = (IsoTp.SF_FRAME_ID << 4) | message_length
-        for index, value in enumerate(payload):
-            frame[1 + index] = value
-        frame_list.append(bytes(frame))
-        return frame_list
-
-    frame = [pad_byte] * IsoTp.MAX_FRAME_LENGTH
-    frame[0] = (IsoTp.FF_FRAME_ID << 4) | (message_length >> 8)
-    frame[1] = message_length & 0xFF
-    for index in range(IsoTp.MAX_FF_LENGTH):
-        frame[2 + index] = payload[index]
-    frame_list.append(bytes(frame))
-
-    bytes_copied = IsoTp.MAX_FF_LENGTH
-    bytes_left_to_copy = message_length - bytes_copied
-    sn = 0
-    while bytes_left_to_copy > 0:
-        sn = (sn + 1) % 16
-        if not padding_enabled and bytes_left_to_copy < IsoTp.MAX_CF_LENGTH:
-            frame = [pad_byte] * (bytes_left_to_copy + 1)
-        else:
-            frame = [pad_byte] * IsoTp.MAX_FRAME_LENGTH
-        frame[0] = (IsoTp.CF_FRAME_ID << 4) | sn
-        bytes_to_copy = min(IsoTp.MAX_CF_LENGTH, bytes_left_to_copy)
-        for index in range(bytes_to_copy):
-            frame[1 + index] = payload[bytes_copied]
-            bytes_copied += 1
-            bytes_left_to_copy -= 1
-        frame_list.append(bytes(frame))
-
-    return frame_list
-
+    return segment_isotp_payload(payload, padding_value=_normalize_padding_value(padding_value), fd=False)
 
 def _normalize_padding_value(padding_value: int | None) -> int | None:
     if padding_value is None:

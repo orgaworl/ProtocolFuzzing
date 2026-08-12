@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import random
 from dataclasses import dataclass
@@ -17,6 +17,7 @@ from .dictionary import (
     UDS_TESTER_PRESENT_SUBFUNCTIONS,
 )
 from .isotp import IsoTp, decode_isotp_payload
+from .scapy_backend import raw_uds_payload, uds_payload
 
 
 UDS_NEGATIVE_RESPONSE_NAMES = {
@@ -248,32 +249,28 @@ def choose_service_id(rng: random.Random, config) -> int:
 
 def build_service_payload(rng: random.Random, service_id: int) -> bytes:
     if service_id == 0x10:
-        return bytes([service_id, rng.choice(UDS_SESSION_LEVELS)])
+        return uds_payload(service_id, rng.choice(UDS_SESSION_LEVELS))
     if service_id == 0x11:
-        return bytes([service_id, rng.choice(UDS_ECU_RESET_TYPES)])
+        return uds_payload(service_id, rng.choice(UDS_ECU_RESET_TYPES))
     if service_id == 0x19:
-        return bytes([service_id, rng.choice([0x01, 0x02, 0x04, 0x06, 0x0A, 0x0F])])
+        return uds_payload(service_id, rng.choice([0x01, 0x02, 0x04, 0x06, 0x0A, 0x0F]))
     if service_id in {0x22, 0x2E}:
-        return bytes([service_id, *rng.choice(UDS_DIDS)])
+        return uds_payload(service_id, rng.choice(UDS_DIDS))
     if service_id == 0x27:
-        return bytes([service_id, rng.choice(UDS_SECURITY_SUBFUNCTIONS)])
+        return uds_payload(service_id, rng.choice(UDS_SECURITY_SUBFUNCTIONS))
     if service_id == 0x28:
-        return bytes([service_id, rng.choice(UDS_COMMUNICATION_SUBFUNCTIONS)])
+        return uds_payload(service_id, rng.choice(UDS_COMMUNICATION_SUBFUNCTIONS))
     if service_id == 0x31:
-        return bytes([service_id, rng.choice(UDS_ROUTINE_SUBFUNCTIONS), *rng.choice(UDS_DIDS)])
+        return uds_payload(service_id, rng.choice(UDS_ROUTINE_SUBFUNCTIONS), rng.choice(UDS_DIDS))
     if service_id == 0x3E:
-        return bytes([service_id, rng.choice(UDS_TESTER_PRESENT_SUBFUNCTIONS)])
+        return uds_payload(service_id, rng.choice(UDS_TESTER_PRESENT_SUBFUNCTIONS))
     if service_id == 0x85:
-        return bytes([service_id, rng.choice(UDS_DTC_SETTING_VALUES)])
-    return bytes([service_id, *random_bytes(rng, rng.randint(0, 6))])
-
+        return uds_payload(service_id, rng.choice(UDS_DTC_SETTING_VALUES))
+    return uds_payload(service_id, random_bytes(rng, rng.randint(0, 6)))
 
 def build_malformed_payload(rng: random.Random, service_id: int) -> bytes:
     length = rng.randint(1, 7)
-    payload = bytearray([service_id])
-    while len(payload) < length:
-        payload.append(rng.randrange(0x00, 0x100))
-    return bytes(payload)
+    return raw_uds_payload(service_id, random_bytes(rng, length - 1))
 
 
 def summarize_responses(response_payloads: list[str], request_service: int) -> dict[str, object]:

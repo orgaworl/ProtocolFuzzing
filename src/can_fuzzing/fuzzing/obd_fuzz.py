@@ -6,8 +6,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..protocol.isotp import encode_isotp_single_frame
-from ..protocol.obd import build_request, summarize_responses
+from ..protocol.obd import OBDProtocol, build_request, summarize_responses
 from ..runtime.keepalive import KeepaliveConfig
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
@@ -68,12 +67,13 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
+    protocol = OBDProtocol()
     with open_fuzz_run(config, csv_path, fieldnames_for("obd"), progress_callback) as run:
 
         try:
             for case_id in iter_case_ids(config.cases):
                 request = build_request(rng, config)
-                isotp_payload = encode_isotp_single_frame(request.application_payload)
+                isotp_payload = protocol.encode_request_frames(request.application_payload)[0]
                 frame = CANFrame.from_ints(request.request_id, isotp_payload, FrameFormat.STANDARD, FrameType.DATA)
                 observation = run.adapter.transact(frame)
 
