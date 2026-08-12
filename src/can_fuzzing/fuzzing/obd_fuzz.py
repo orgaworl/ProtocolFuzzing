@@ -11,9 +11,9 @@ from ..protocol.obd import build_request, summarize_responses
 from ..runtime.keepalive import KeepaliveConfig
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
+from .results import fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
-
 
 @dataclass(frozen=True)
 class OBDFuzzConfig:
@@ -33,7 +33,6 @@ class OBDFuzzConfig:
     progress_seconds: float
     keepalive: KeepaliveConfig
 
-
 @dataclass(frozen=True)
 class OBDFuzzResult:
     campaign: str
@@ -49,7 +48,6 @@ class OBDFuzzResult:
     unique_pids: int
     csv_path: Path
     summary_path: Path
-
 
 def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback | None = None) -> OBDFuzzResult:
     rng = random.Random(config.seed)
@@ -70,7 +68,7 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with open_fuzz_run(config, csv_path, result_fieldnames(), progress_callback) as run:
+    with open_fuzz_run(config, csv_path, fieldnames_for("obd"), progress_callback) as run:
 
         try:
             for case_id in range(config.cases):
@@ -218,7 +216,6 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
         summary_path=summary_path,
     )
 
-
 def build_coverage_points(request, response_summary: dict[str, int | str], response_ids: list[int]) -> set[str]:
     points = {
         f"tx_request_id_{request.request_id:x}",
@@ -232,33 +229,6 @@ def build_coverage_points(request, response_summary: dict[str, int | str], respo
     for response_id in response_ids:
         points.add(f"rx_id_{response_id:x}")
     return points
-
-
-def result_fieldnames() -> list[str]:
-    return [
-        "case_id",
-        "timestamp_ms",
-        "request_id",
-        "request_mode",
-        "obd_mode",
-        "mode_name",
-        "pid",
-        "is_malformed",
-        "application_payload_hex",
-        "isotp_payload_hex",
-        "sent",
-        "fault",
-        "response_count",
-        "response_ids",
-        "response_payloads",
-        "positive_responses",
-        "negative_responses",
-        "response_kind",
-        "latency_ms",
-        "error",
-        "coverage_count",
-    ]
-
 
 def write_summary(
     summary_path: Path,
@@ -306,4 +276,4 @@ def write_summary(
         "coverage_points": len(coverage),
         "csv_path": str(csv_path),
     }
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_json_summary(summary_path, summary)

@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .results import fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig
@@ -14,7 +15,6 @@ from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
 
 DIAGNOSTIC_IDS = COMMON_CAN_IDS
-
 
 class CANFuzzingStrategyConfig:
     inter_frame_delay_ms: float
@@ -25,7 +25,6 @@ class CANFuzzingStrategyConfig:
     extended_probability: float
     include_remote: bool
     include_error: bool
-
 
 @dataclass(frozen=True)
 class FuzzConfig:
@@ -45,7 +44,6 @@ class FuzzConfig:
     progress_seconds: float
     keepalive: KeepaliveConfig
 
-
 @dataclass(frozen=True)
 class FuzzResult:
     campaign: str
@@ -59,7 +57,6 @@ class FuzzResult:
     coverage_points: int
     csv_path: Path
     summary_path: Path
-
 
 def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None = None) -> FuzzResult:
     rng = random.Random(config.seed)
@@ -77,7 +74,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None =
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with open_fuzz_run(config, csv_path, result_fieldnames(), progress_callback) as run:
+    with open_fuzz_run(config, csv_path, fieldnames_for("can"), progress_callback) as run:
 
         try:
             current_timestamp_ms = 0
@@ -198,7 +195,6 @@ def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None =
         summary_path=summary_path,
     )
 
-
 def generate_frame(rng: random.Random, case_id: int, current_timestamp_ms: int, config: CANFuzzingStrategyConfig) -> CANFrame:
     frame_format = choose_frame_format(rng, config)
     frame_type = choose_frame_type(rng, config)
@@ -214,12 +210,10 @@ def generate_frame(rng: random.Random, case_id: int, current_timestamp_ms: int, 
         timestamp_ms=timestamp_ms,
     )
 
-
 def choose_frame_format(rng: random.Random, config: CANFuzzingStrategyConfig) -> FrameFormat:
     if rng.random() < config.extended_probability:
         return FrameFormat.EXTENDED
     return FrameFormat.STANDARD
-
 
 def choose_frame_type(rng: random.Random, config: CANFuzzingStrategyConfig) -> FrameType:
     choices = [FrameType.DATA]
@@ -232,7 +226,6 @@ def choose_frame_type(rng: random.Random, config: CANFuzzingStrategyConfig) -> F
         weights.append(0.02)
     return rng.choices(choices, weights=weights, k=1)[0]
 
-
 def choose_identifier(rng: random.Random, frame_format: FrameFormat, config: CANFuzzingStrategyConfig) -> int:
     upper_limit = 0x7FF if frame_format == FrameFormat.STANDARD else 0x1FFFFFFF
     id_min = max(0, min(config.id_min, upper_limit))
@@ -241,7 +234,6 @@ def choose_identifier(rng: random.Random, frame_format: FrameFormat, config: CAN
     if diagnostic_ids and rng.random() < config.diagnostic_bias:
         return rng.choice(diagnostic_ids)
     return rng.randint(id_min, id_max)
-
 
 def choose_payload(rng: random.Random, identifier: int, config: CANFuzzingStrategyConfig) -> bytes:
     if identifier in DIAGNOSTIC_IDS and rng.random() < 0.75:
@@ -255,13 +247,11 @@ def choose_payload(rng: random.Random, identifier: int, config: CANFuzzingStrate
     length = rng.choice(interesting_lengths)
     return bytes(rng.randrange(256) for _ in range(length))
 
-
 def pad_classic_payload(data: list[int], rng: random.Random) -> list[int]:
     data = data[:8]
     if len(data) < 8 and rng.random() < 0.7:
         data = data + [0x00] * (8 - len(data))
     return data
-
 
 def classify_coverage(frame: CANFrame, observation) -> set[str]:
     points = {
@@ -279,33 +269,8 @@ def classify_coverage(frame: CANFrame, observation) -> set[str]:
         points.add(f"rx_id_{response_id:x}")
     return points
 
-
 def encode_int_list(values: list[int]) -> str:
     return ";".join(f"0x{value:x}" for value in values)
-
-
-def result_fieldnames() -> list[str]:
-    return [
-        "case_id",
-        "timestamp_ms",
-        "identifier",
-        "frame_format",
-        "frame_type",
-        "dlc",
-        "payload_hex",
-        "sent",
-        "accepted",
-        "fault",
-        "state",
-        "reason",
-        "response_count",
-        "response_ids",
-        "response_payloads",
-        "latency_ms",
-        "error",
-        "coverage_count",
-    ]
-
 
 def write_summary(
     summary_path: Path,
@@ -342,4 +307,4 @@ def write_summary(
         "coverage_points": len(coverage),
         "csv_path": str(csv_path),
     }
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_json_summary(summary_path, summary)

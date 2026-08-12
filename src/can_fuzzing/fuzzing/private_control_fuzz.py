@@ -10,9 +10,9 @@ from ..protocol.private_control import build_request
 from ..runtime.keepalive import KeepaliveConfig
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
+from .results import fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
-
 
 @dataclass(frozen=True)
 class PrivateFuzzConfig:
@@ -33,7 +33,6 @@ class PrivateFuzzConfig:
     progress_seconds: float
     keepalive: KeepaliveConfig
 
-
 @dataclass(frozen=True)
 class PrivateFuzzResult:
     campaign: str
@@ -48,7 +47,6 @@ class PrivateFuzzResult:
     coverage_points: int
     csv_path: Path
     summary_path: Path
-
 
 def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCallback | None = None) -> PrivateFuzzResult:
     rng = random.Random(config.seed)
@@ -67,7 +65,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
     coverage: set[str] = set()
     last_progress = time.monotonic()
 
-    with open_fuzz_run(config, csv_path, result_fieldnames(), progress_callback) as run:
+    with open_fuzz_run(config, csv_path, fieldnames_for("private"), progress_callback) as run:
 
         try:
             for case_id in range(config.cases):
@@ -200,7 +198,6 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
         summary_path=summary_path,
     )
 
-
 def build_coverage_points(request, observation) -> set[str]:
     points = {
         f"tx_id_{request.target_id:x}",
@@ -212,30 +209,6 @@ def build_coverage_points(request, observation) -> set[str]:
     for response_id in observation.response_ids:
         points.add(f"rx_id_{response_id:x}")
     return points
-
-
-def result_fieldnames() -> list[str]:
-    return [
-        "case_id",
-        "timestamp_ms",
-        "target_id",
-        "opcode",
-        "strategy",
-        "is_malformed",
-        "dlc",
-        "payload_hex",
-        "sent",
-        "fault",
-        "state",
-        "reason",
-        "response_count",
-        "response_ids",
-        "response_payloads",
-        "latency_ms",
-        "error",
-        "coverage_count",
-    ]
-
 
 def write_summary(
     summary_path: Path,
@@ -281,4 +254,4 @@ def write_summary(
         "coverage_points": len(coverage),
         "csv_path": str(csv_path),
     }
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_json_summary(summary_path, summary)

@@ -8,13 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from ..log import warning
+from .results import fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
 from .utils import report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
 from ..protocol.dbc import DBCDatabase, DBCMessage, DBCSignal, coerce_number, load_dbc_database
-
 
 @dataclass(frozen=True)
 class DBCFuzzConfig:
@@ -28,7 +28,6 @@ class DBCFuzzConfig:
     progress_interval: int
     progress_seconds: float
     keepalive: KeepaliveConfig
-
 
 @dataclass(frozen=True)
 class DBCFuzzResult:
@@ -45,7 +44,6 @@ class DBCFuzzResult:
     coverage_points: int
     csv_path: Path
     summary_path: Path
-
 
 def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: ProgressCallback | None = None) -> DBCFuzzResult:
     rng = random.Random(config.seed)
@@ -72,7 +70,7 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: ProgressCallback |
     if database.requires_fd and not config.hardware.fd:
         warning("DBC file contains frames larger than 8 bytes; enabling CAN FD automatically")
 
-    with open_fuzz_run(config, csv_path, result_fieldnames(), progress_callback) as run:
+    with open_fuzz_run(config, csv_path, fieldnames_for("dbc"), progress_callback) as run:
 
         try:
             for case_id in range(config.cases):
@@ -227,7 +225,6 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: ProgressCallback |
         summary_path=summary_path,
     )
 
-
 def build_coverage_points(request: DBCRequest, observation, decoded_responses: list[dict[str, object]]) -> set[str]:
     points = {
         f"tx_message_{request.message_name}",
@@ -247,32 +244,6 @@ def build_coverage_points(request: DBCRequest, observation, decoded_responses: l
             for signal_name in signals:
                 points.add(f"rx_signal_{signal_name}")
     return points
-
-
-def result_fieldnames() -> list[str]:
-    return [
-        "case_id",
-        "timestamp_ms",
-        "message_id",
-        "message_name",
-        "strategy",
-        "frame_format",
-        "dlc",
-        "payload_hex",
-        "signal_values",
-        "sent",
-        "fault",
-        "state",
-        "reason",
-        "response_count",
-        "response_ids",
-        "response_payloads",
-        "decoded_responses",
-        "latency_ms",
-        "error",
-        "coverage_count",
-    ]
-
 
 def write_summary(
     summary_path: Path,
@@ -317,13 +288,7 @@ def write_summary(
         "coverage_points": len(coverage),
         "csv_path": str(csv_path),
     }
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-
-
-
-
-
+    write_json_summary(summary_path, summary)
 
 @dataclass(frozen=True)
 class DBCRequest:
@@ -333,11 +298,9 @@ class DBCRequest:
     signal_values: dict[str, Any]
     strategy: str
 
-
 def choose_message(rng: random.Random, database: DBCDatabase) -> DBCMessage:
     weights = [max(1, len(message.signals)) + max(1, message.size) for message in database.messages]
     return rng.choices(database.messages, weights=weights, k=1)[0]
-
 
 def build_request(rng: random.Random, database: DBCDatabase) -> DBCRequest:
     message = choose_message(rng, database)
@@ -352,13 +315,11 @@ def build_request(rng: random.Random, database: DBCDatabase) -> DBCRequest:
         strategy=strategy,
     )
 
-
 def build_signal_values(rng: random.Random, message: DBCMessage, strategy: str) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for signal in message.signals:
         values[signal.name] = choose_signal_value(rng, signal, strategy)
     return values
-
 
 def choose_signal_value(rng: random.Random, signal: DBCSignal, strategy: str) -> Any:
     if signal.choices:
@@ -376,7 +337,6 @@ def choose_signal_value(rng: random.Random, signal: DBCSignal, strategy: str) ->
         return rng.choice(candidates[: max(1, min(4, len(candidates)))])
     return random_value(rng, signal)
 
-
 def interesting_values(signal: DBCSignal) -> list[int | float]:
     values: list[int | float] = []
     raw_min = signal.raw_min
@@ -393,11 +353,9 @@ def interesting_values(signal: DBCSignal) -> list[int | float]:
         values.append(signal.baseline_value())
     return dedupe(values)
 
-
 def random_value(rng: random.Random, signal: DBCSignal) -> int | float:
     raw = rng.randint(signal.raw_min, signal.raw_max)
     return coerce_number(raw * signal.factor + signal.offset)
-
 
 def dedupe(values: list[int | float]) -> list[int | float]:
     seen: set[tuple[type, Any]] = set()
