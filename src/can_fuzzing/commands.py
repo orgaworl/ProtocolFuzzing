@@ -1,23 +1,19 @@
 from __future__ import annotations
 
-import json
 import shutil
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 from .runtime.adapters import CANHardwareAdapter
+from .runtime.keepalive import KeepaliveConfig, KeepaliveWorker
 from .runtime.errors import CANConnectionError
 from .config import (
     build_fuzz_keepalive_config,
-    build_hardware_config,
     normalize_protocol,
     parse_hex_bytes,
-    parse_interface_names,
     parse_int_list,
 )
-from .scanning.hardware_scan import list_can_interfaces
 from .scanning.can_fd_scan import FDCheckConfig, run_fdcheck
 from .fuzzing.can_fuzz import FuzzConfig, run_fuzzing
 from .fuzzing.dbc_fuzz import DBCFuzzConfig, run_dbc_fuzzing
@@ -25,6 +21,7 @@ from .fuzzing.obd_fuzz import OBDFuzzConfig, run_obd_fuzzing
 from .fuzzing.private_control_fuzz import PrivateFuzzConfig, run_private_fuzzing
 from .fuzzing.uds_fuzz import UDSFuzzConfig, run_uds_fuzzing
 from .scanning.can_id_scan import ScanConfig, run_scan
+from .command_support import discover_interfaces, resolve_hardware
 from .log import (
     format_bool,
     log_can_event,
@@ -39,10 +36,6 @@ from .log import (
     status_level,
 )
 
-
-def resolve_hardware(args: SimpleNamespace, section: str) -> Any:
-    args.interface, args.channel = resolve_interface_and_channel(args, section)
-    return build_hardware_config(vars(args))
 
 def run_fuzz_from_args(args: SimpleNamespace) -> None:
     protocol = normalize_protocol(getattr(args, "protocol", None)) or "can"
@@ -180,78 +173,13 @@ def run_clean_from_args(args: SimpleNamespace) -> None:
 
 
 def run_list_from_args(args: SimpleNamespace) -> None:
-    interfaces = parse_interface_names(args.interfaces) if args.interfaces else None
-    try:
-        configs = list_can_interfaces(
-            interfaces=interfaces,
-            include_virtual=args.include_virtual,
-            verbose=args.verbose,
-        )
-    except RuntimeError as exc:
-        log_structured("error", "error", {"message": exc})
-        raise SystemExit(2) from exc
+    configs = discover_interfaces(args)
     if args.json:
+        import json
+
         print(json.dumps(configs, indent=2, default=str))
         return
     print_interface_table(configs)
-
-
-def resolve_interface_and_channel(args: SimpleNamespace, section: str) -> tuple[str, str]:
-    interface = getattr(args, "interface", None)
-    channel = getattr(args, "channel", None)
-    if interface and channel:
-        return str(interface), str(channel)
-
-    log_structured("warning", section, {"interface": "missing", "channel": "missing", "action": "running_interface_discovery"})
-    interfaces = parse_interface_names(args.interfaces) if getattr(args, "interfaces", None) else None
-    if interface and interfaces is None:
-        interfaces = [str(interface)]
-    try:
-        configs = list_can_interfaces(
-            interfaces=interfaces,
-            include_virtual=getattr(args, "include_virtual", False),
-            verbose=getattr(args, "verbose", False),
-        )
-    except RuntimeError as exc:
-        log_structured("error", "error", {"message": exc})
-        raise SystemExit(2) from exc
-
-    if getattr(args, "json", False):
-        print(json.dumps(configs, indent=2, default=str))
-    else:
-        print_interface_table(configs)
-
-    if not configs:
-        raise SystemExit(2)
-    if len(configs) == 1:
-        selected = configs[0]
-        log_structured("warning", "auto_selected", {"interface": selected.get('interface', ''), "channel": selected.get('channel', '')})
-        return str(selected.get("interface", "")), str(selected.get("channel", ""))
-
-    selected = prompt_interface_selection(configs)
-    log_structured("warning", "selected", {"interface": selected.get('interface', ''), "channel": selected.get('channel', '')})
-    return str(selected.get("interface", "")), str(selected.get("channel", ""))
-
-
-def prompt_interface_selection(configs: list[dict[str, Any]]) -> dict[str, Any]:
-    while True:
-        log_structured("info", "select_interface", {"action": "choose_by_index", "options": len(configs)})
-        for index, config in enumerate(configs, start=1):
-            log_structured("info", f"option[{index}]", {"interface": config.get('interface', ''), "channel": config.get('channel', ''), "device": config.get('device_name') or config.get('device') or ''})
-        try:
-            choice = input(f"select CAN interface [1-{len(configs)}]: ").strip()
-        except EOFError:
-            raise SystemExit(2) from None
-        if not choice:
-            continue
-        try:
-            index = int(choice)
-        except ValueError:
-            log_structured("warning", "selection", {"value": choice, "reason": "numeric_index_required"})
-            continue
-        if 1 <= index <= len(configs):
-            return configs[index - 1]
-        log_structured("warning", "selection", {"value": choice, "range": f"1-{len(configs)}"})
 
 
 def run_scan_from_args(args: SimpleNamespace) -> None:

@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from can_fuzzing import cli
-from can_fuzzing import config as cli_config, commands, log
+from can_fuzzing import command_support, config as cli_config, commands, log
 
 BASE_HW = {
     "bitrate": 500000,
@@ -234,15 +234,15 @@ class CliTests(unittest.TestCase):
     def test_resolve_interface_auto_selects_single_detection(self) -> None:
         args = SimpleNamespace(interfaces=None, include_virtual=False, verbose=False, json=False)
         configs = [{"interface": "pcan", "channel": "PCAN_USBBUS1"}]
-        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
-            interface, channel = commands.resolve_interface_and_channel(args, "fuzz")
+        with patch.object(command_support, "list_can_interfaces", return_value=configs), patch.object(command_support, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
+            interface, channel = command_support.resolve_interface_and_channel(args, "fuzz")
         self.assertEqual((interface, channel), ("pcan", "PCAN_USBBUS1"))
 
     def test_resolve_interface_uses_discovery_when_channel_missing(self) -> None:
         args = SimpleNamespace(interface="pcan", channel=None, interfaces=None, include_virtual=False, verbose=False, json=False)
         configs = [{"interface": "pcan", "channel": "PCAN_USBBUS1"}]
-        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
-            interface, channel = commands.resolve_interface_and_channel(args, "fuzz")
+        with patch.object(command_support, "list_can_interfaces", return_value=configs), patch.object(command_support, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
+            interface, channel = command_support.resolve_interface_and_channel(args, "fuzz")
         self.assertEqual((interface, channel), ("pcan", "PCAN_USBBUS1"))
 
     def test_resolve_interface_prompts_for_multiple_detections(self) -> None:
@@ -251,8 +251,8 @@ class CliTests(unittest.TestCase):
             {"interface": "pcan", "channel": "PCAN_USBBUS1"},
             {"interface": "vector", "channel": "vcan0"},
         ]
-        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None), patch("builtins.input", return_value="2"):
-            interface, channel = commands.resolve_interface_and_channel(args, "scan")
+        with patch.object(command_support, "list_can_interfaces", return_value=configs), patch.object(command_support, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None), patch("builtins.input", return_value="2"):
+            interface, channel = command_support.resolve_interface_and_channel(args, "scan")
         self.assertEqual((interface, channel), ("vector", "vcan0"))
 
     def test_click_fuzz_accepts_dbc_protocol_and_dbc_file(self) -> None:
@@ -277,10 +277,3 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-
-
-
-
-
