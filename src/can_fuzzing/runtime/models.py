@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable
 
-from ..protocol.scapy_backend import build_can_payload
+from scapy.layers.can import CAN
 
 
 class FrameFormat(str, Enum):
@@ -78,7 +78,7 @@ class CANFrame:
     ) -> "CANFrame":
         return cls(
             identifier=identifier,
-            data=build_can_payload(v & 0xFF for v in values),
+            data=bytes(CAN(identifier=0, data=bytes(v & 0xFF for v in values)).data),
             frame_format=frame_format,
             frame_type=frame_type,
             timestamp_ms=timestamp_ms,

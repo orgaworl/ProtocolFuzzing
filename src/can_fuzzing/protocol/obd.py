@@ -6,8 +6,34 @@ from dataclasses import dataclass
 from ..fuzzing.utils import random_bytes
 from .dictionary import COMMON_OBD_PIDS, OBD_MODE_NAMES, OBD_MODE_POOL
 from .isotp import IsoTp, decode_isotp_payload
-from .scapy_backend import obd_payload, raw_obd_payload
+from scapy.contrib.automotive.obd.obd import OBD
+from scapy.contrib.automotive.obd.services import OBD_S01, OBD_S02, OBD_S06, OBD_S08, OBD_S09
+from scapy.packet import Raw
 
+
+def obd_payload(mode: int, pid: int | None = None) -> bytes:
+    packet = OBD(service=mode)
+    if pid is None:
+        return bytes(packet)
+    return bytes(packet / _obd_service_packet(mode, pid))
+
+
+def raw_obd_payload(mode: int, data: bytes = b'') -> bytes:
+    return bytes(OBD(service=mode) / Raw(bytes(data)))
+
+
+def _obd_service_packet(mode: int, pid: int):
+    if mode == 0x01:
+        return OBD_S01(pid=pid)
+    if mode == 0x02:
+        return OBD_S02(pid=pid)
+    if mode == 0x06:
+        return OBD_S06(mid=pid)
+    if mode == 0x08:
+        return OBD_S08(tid=pid)
+    if mode == 0x09:
+        return OBD_S09(iid=pid)
+    return Raw(bytes([pid & 0xFF]))
 
 OBD_SUPPORTED_PID_MODES = {0x01, 0x02, 0x05, 0x06, 0x08, 0x09}
 

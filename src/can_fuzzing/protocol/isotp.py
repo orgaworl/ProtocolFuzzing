@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from .scapy_backend import encode_isotp_single_payload, segment_isotp_payload
+from scapy.contrib.isotp.isotp_packet import ISOTP
 
 
 @dataclass(frozen=True)
@@ -102,7 +102,7 @@ class IsoTp:
 def encode_isotp_single_frame(application_payload: bytes) -> bytes:
     if len(application_payload) > IsoTp.MAX_SF_LENGTH:
         raise ValueError("payload exceeds classic CAN ISO-TP single-frame capacity")
-    return encode_isotp_single_payload(application_payload, padding_value=0x00)
+    return _scapy_segment_isotp_payload(application_payload, padding_value=0x00)[0]
 
 def decode_isotp_payload(raw: bytes) -> tuple[str, bytes]:
     return IsoTp.decode_frame(raw)
@@ -114,7 +114,19 @@ def segment_isotp_message(message: bytes | Iterable[int], padding_value: int | N
         raise ValueError(
             f"Message too long for ISO-TP. Max allowed length is {IsoTp.MAX_MESSAGE_LENGTH} bytes, received {len(payload)} bytes"
         )
-    return segment_isotp_payload(payload, padding_value=_normalize_padding_value(padding_value), fd=False)
+    return _scapy_segment_isotp_payload(payload, padding_value=_normalize_padding_value(padding_value), fd=False)
+
+
+def _scapy_segment_isotp_payload(application_payload: bytes, padding_value: int | None = 0x00, fd: bool = False) -> list[bytes]:
+    frames = ISOTP(data=bytes(application_payload), rx_id=0).fragment(fd=fd)
+    frame_size = 64 if fd else IsoTp.MAX_FRAME_LENGTH
+    return [_pad_can_payload(bytes(frame.data), padding_value, frame_size) for frame in frames]
+
+
+def _pad_can_payload(payload: bytes, padding_value: int | None, frame_size: int) -> bytes:
+    if padding_value is None or len(payload) > frame_size:
+        return payload
+    return payload + bytes([padding_value & 0xFF]) * (frame_size - len(payload))
 
 def _normalize_padding_value(padding_value: int | None) -> int | None:
     if padding_value is None:

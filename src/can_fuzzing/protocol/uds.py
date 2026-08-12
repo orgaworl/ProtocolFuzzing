@@ -17,8 +17,70 @@ from .dictionary import (
     UDS_TESTER_PRESENT_SUBFUNCTIONS,
 )
 from .isotp import IsoTp, decode_isotp_payload
-from .scapy_backend import raw_uds_payload, uds_payload
+from scapy.contrib.automotive.uds import UDS, UDS_CC, UDS_CDTCS, UDS_DSC, UDS_ER, UDS_RC, UDS_RDBI, UDS_RDTCI, UDS_SA, UDS_TP, UDS_WDBI
+from scapy.packet import Raw
 
+
+def uds_payload(service_id: int, *values: int | bytes) -> bytes:
+    return bytes(UDS() / _uds_service_packet(service_id, *values))
+
+
+def raw_uds_payload(service_id: int, data: bytes = b'') -> bytes:
+    return bytes(UDS(service=service_id) / Raw(bytes(data)))
+
+
+def _uds_service_packet(service_id: int, *values: int | bytes):
+    if service_id == 0x10:
+        return UDS_DSC(diagnosticSessionType=_value(values, 0))
+    if service_id == 0x11:
+        return UDS_ER(resetType=_value(values, 0))
+    if service_id == 0x19:
+        return UDS_RDTCI(reportType=_value(values, 0))
+    if service_id == 0x22:
+        return UDS_RDBI(identifiers=[_u16_value(values, 0)])
+    if service_id == 0x27:
+        return UDS_SA(securityAccessType=_value(values, 0))
+    if service_id == 0x28:
+        return UDS_CC(controlType=_value(values, 0))
+    if service_id == 0x2E:
+        return UDS_WDBI(dataIdentifier=_u16_value(values, 0))
+    if service_id == 0x31:
+        return UDS_RC(routineControlType=_value(values, 0), routineIdentifier=_u16_value(values, 1))
+    if service_id == 0x3E:
+        return UDS_TP(subFunction=_value(values, 0))
+    if service_id == 0x85:
+        return UDS_CDTCS(DTCSettingType=_value(values, 0))
+    return Raw(bytes([service_id, *_flatten_values(values)]))
+
+
+def _value(values: tuple[int | bytes, ...], index: int, default: int = 0) -> int:
+    if index >= len(values):
+        return default
+    value = values[index]
+    if isinstance(value, bytes):
+        return int.from_bytes(value[:1] or b'\x00', 'big')
+    return int(value) & 0xFF
+
+
+def _u16_value(values: tuple[int | bytes, ...], index: int, default: int = 0) -> int:
+    if index >= len(values):
+        return default
+    value = values[index]
+    if isinstance(value, bytes):
+        if len(value) >= 2:
+            return int.from_bytes(value[:2], 'big')
+        return _value((value,), 0, default)
+    return int(value) & 0xFFFF
+
+
+def _flatten_values(values: tuple[int | bytes, ...]) -> list[int]:
+    flattened: list[int] = []
+    for value in values:
+        if isinstance(value, bytes):
+            flattened.extend(value)
+        else:
+            flattened.append(value & 0xFF)
+    return flattened
 
 UDS_NEGATIVE_RESPONSE_NAMES = {
     0x10: 'general_reject',

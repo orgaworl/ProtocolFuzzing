@@ -4,8 +4,12 @@ import random
 from dataclasses import dataclass
 
 from .dictionary import PRIVATE_OPCODES, PRIVATE_TARGET_IDS
-from .scapy_backend import raw_payload
+from scapy.packet import Raw
 
+
+
+def raw_payload(first_byte: int, data: bytes = b'') -> bytes:
+    return bytes(Raw(bytes([first_byte & 0xFF]) + bytes(data)))
 
 @dataclass(frozen=True)
 class PrivateControlRequest:

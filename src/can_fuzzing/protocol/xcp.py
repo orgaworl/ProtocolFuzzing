@@ -5,6 +5,12 @@ from dataclasses import dataclass
 
 from .dictionary import COMMON_CAN_IDS
 
+from scapy.contrib.automotive.xcp.xcp import CTORequest
+from scapy.packet import Raw
+
+
+def xcp_payload(command_code: int, data: bytes = b'') -> bytes:
+    return bytes(CTORequest(pid=command_code) / Raw(data))
 
 XCP_COMMAND_NAMES = {
     0xFF: 'connect',
