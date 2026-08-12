@@ -12,7 +12,7 @@ from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
 from .results import build_common_summary, fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
-from .utils import report_progress, should_report_progress
+from .utils import iter_case_ids, report_progress, should_report_progress
 
 @dataclass(frozen=True)
 class PrivateFuzzConfig:
@@ -68,7 +68,7 @@ def run_private_fuzzing(config: PrivateFuzzConfig, progress_callback: ProgressCa
     with open_fuzz_run(config, csv_path, fieldnames_for("private"), progress_callback) as run:
 
         try:
-            for case_id in range(config.cases):
+            for case_id in iter_case_ids(config.cases):
                 request = build_request(rng, config, case_id)
                 frame = CANFrame(
                     identifier=request.target_id,

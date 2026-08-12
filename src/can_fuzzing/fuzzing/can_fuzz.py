@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .results import build_common_summary, fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
-from .utils import report_progress, should_report_progress
+from .utils import iter_case_ids, report_progress, should_report_progress
 from ..runtime.keepalive import KeepaliveConfig
 from ..protocol.dictionary import COMMON_CAN_IDS, COMMON_CLASSIC_LENGTHS, COMMON_DIAGNOSTIC_TEMPLATES, COMMON_DIAGNOSTIC_TEMPLATES_FD, COMMON_FD_LENGTHS
 from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
@@ -78,7 +78,7 @@ def run_fuzzing(config: FuzzConfig, progress_callback: ProgressCallback | None =
 
         try:
             current_timestamp_ms = 0
-            for case_id in range(config.cases):
+            for case_id in iter_case_ids(config.cases):
                 frame = generate_frame(rng, case_id, current_timestamp_ms, config)
                 current_timestamp_ms = frame.timestamp_ms
                 observation = run.adapter.transact(frame)

@@ -13,7 +13,7 @@ from ..runtime.models import CANFrame, CANHardwareConfig, FrameFormat, FrameType
 from ..runtime.types import ProgressCallback
 from .results import build_common_summary, fieldnames_for, write_json_summary
 from .runner import open_fuzz_run
-from .utils import report_progress, should_report_progress
+from .utils import iter_case_ids, report_progress, should_report_progress
 
 @dataclass(frozen=True)
 class OBDFuzzConfig:
@@ -71,7 +71,7 @@ def run_obd_fuzzing(config: OBDFuzzConfig, progress_callback: ProgressCallback |
     with open_fuzz_run(config, csv_path, fieldnames_for("obd"), progress_callback) as run:
 
         try:
-            for case_id in range(config.cases):
+            for case_id in iter_case_ids(config.cases):
                 request = build_request(rng, config)
                 isotp_payload = encode_isotp_single_frame(request.application_payload)
                 frame = CANFrame.from_ints(request.request_id, isotp_payload, FrameFormat.STANDARD, FrameType.DATA)

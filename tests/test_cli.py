@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from can_fuzzing import cli
 from can_fuzzing import command_support, config as cli_config, commands, log
+from can_fuzzing.fuzzing.utils import iter_case_ids, should_report_progress
 
 BASE_HW = {
     "bitrate": 500000,
@@ -244,6 +245,15 @@ class CliTests(unittest.TestCase):
         with patch.object(command_support, "list_can_interfaces", return_value=configs), patch.object(command_support, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
             interface, channel = command_support.resolve_interface_and_channel(args, "fuzz")
         self.assertEqual((interface, channel), ("pcan", "PCAN_USBBUS1"))
+
+    def test_zero_cases_enable_infinite_fuzz_iteration(self) -> None:
+        values = []
+        for index in iter_case_ids(0):
+            values.append(index)
+            if len(values) == 3:
+                break
+        self.assertEqual(values, [0, 1, 2])
+        self.assertFalse(should_report_progress(SimpleNamespace(cases=0, progress_interval=1, progress_seconds=1.0), 0, 1.0, 0.0))
 
     def test_resolve_interface_prompts_for_multiple_detections(self) -> None:
         args = SimpleNamespace(interfaces=None, include_virtual=False, verbose=False, json=False)

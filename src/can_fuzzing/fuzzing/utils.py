@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from itertools import count
 from typing import Protocol
 
 
@@ -21,9 +22,15 @@ def should_report_progress(config: ProgressConfig, completed_cases: int, now: fl
         return True
     if config.progress_seconds > 0 and now - last_progress >= config.progress_seconds:
         return True
-    if completed_cases == config.cases:
+    if config.cases > 0 and completed_cases == config.cases:
         return True
     return False
+
+
+def iter_case_ids(cases: int):
+    if cases > 0:
+        return range(cases)
+    return count()
 
 
 def report_progress(progress_callback: ProgressCallback | None, **snapshot: object) -> None:
