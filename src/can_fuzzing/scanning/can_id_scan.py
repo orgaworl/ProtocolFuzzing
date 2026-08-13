@@ -21,8 +21,8 @@ class ScanConfig:
     inter_probe_delay_ms: float
     active: bool
     passive: bool
-    physical_start: int
-    physical_end: int
+    probe_id_start: int
+    probe_id_end: int
 
 
 @dataclass
@@ -175,7 +175,7 @@ def build_active_probes(config: ScanConfig) -> list[CANFrame]:
     ]
     for payload in safe_payloads:
         probes.append(CANFrame.from_ints(0x7DF, payload, FrameFormat.STANDARD, FrameType.DATA))
-    for request_id in range(config.physical_start, config.physical_end + 1):
+    for request_id in range(config.probe_id_start, config.probe_id_end + 1):
         probes.append(CANFrame.from_ints(request_id, [0x02, 0x10, 0x01, 0, 0, 0, 0, 0], FrameFormat.STANDARD, FrameType.DATA))
         probes.append(CANFrame.from_ints(request_id, [0x02, 0x3E, 0x00, 0, 0, 0, 0, 0], FrameFormat.STANDARD, FrameType.DATA))
     return probes

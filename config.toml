@@ -5,15 +5,11 @@
 bitrate = 500000
 receive_timeout = 0.05
 fd = false
-data_bitrate = 2000000
 auto_bitrate = false
 bitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]
 data_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]
 bitrate_probe_timeout = 0.2
 fd_timing_preset = "sae-j2284"
-fd_clock = 80000000
-nominal_sample_point = 87.5
-data_sample_point = 80.0
 check_message = true
 drop_echo = true
 
@@ -58,8 +54,8 @@ output_dir = "result"
 passive_duration = 10.0
 active_timeout = 0.25
 inter_probe_delay_ms = 50.0
-physical_start = 0x7e0
-physical_end = 0x7e7
+probe_id_start = 0x7e0
+probe_id_end = 0x7e7
 passive_only = false
 active_only = false
 isotp_request_id_start = 0x7e0

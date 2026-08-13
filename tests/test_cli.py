@@ -75,7 +75,7 @@ class CliTests(unittest.TestCase):
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
                 "[hardware]\nreceive_timeout = 0.05\nfd = false\nauto_bitrate = false\nbitrate = 500000\ncheck_message = true\ndrop_echo = true\n\n"
-                "[scan]\ncampaign = \"can_scan\"\noutput_dir = \"result\"\npassive_duration = 1.0\nactive_timeout = 0.1\ninter_probe_delay_ms = 1.0\nphysical_start = 0x7e0\nphysical_end = 0x7e7\npassive_only = false\nactive_only = false\nisotp_request_id_start = 0x7e0\nisotp_request_id_end = 0x7e7\nisotp_sniff_time = 0.1\nisotp_verify_results = true\nisotp_extended_can_id = false\nisotp_protocol_probe = true\nisotp_protocol_probe_timeout = 0.2\nxcp_request_id_start = 0x0\nxcp_request_id_end = 0x7ff\nxcp_response_timeout = 0.1\nxcp_inter_probe_delay_ms = 1.0\nxcp_extended_can_id = false\n",
+                "[scan]\ncampaign = \"can_scan\"\noutput_dir = \"result\"\npassive_duration = 1.0\nactive_timeout = 0.1\ninter_probe_delay_ms = 1.0\nprobe_id_start = 0x7e0\nprobe_id_end = 0x7e7\npassive_only = false\nactive_only = false\nisotp_request_id_start = 0x7e0\nisotp_request_id_end = 0x7e7\nisotp_sniff_time = 0.1\nisotp_verify_results = true\nisotp_extended_can_id = false\nisotp_protocol_probe = true\nisotp_protocol_probe_timeout = 0.2\nxcp_request_id_start = 0x0\nxcp_request_id_end = 0x7ff\nxcp_response_timeout = 0.1\nxcp_inter_probe_delay_ms = 1.0\nxcp_extended_can_id = false\n",
                 encoding="utf-8",
                 newline="\n",
             )

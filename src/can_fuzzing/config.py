@@ -227,7 +227,7 @@ CLEAN_KEYS = {"result_dir"}
 KEEPALIVE_FUZZ_KEYS = {"keepalive", "keepalive_id", "keepalive_payload", "keepalive_interval_ms", "keepalive_format", "keepalive_fd", "keepalive_listen", "keepalive_listen_timeout", "keepalive_check_message"}
 KEEPALIVE_CLI_KEYS = {"fd", "arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"}
 FDCHECK_KEYS = {"campaign", "output_dir", "probe_timeout", "probe_delay_ms", "probe_lengths"}
-SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only", "scan_protocol", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_inter_probe_delay_ms", "xcp_extended_can_id"}
+SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "probe_id_start", "probe_id_end", "passive_only", "active_only", "scan_protocol", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_inter_probe_delay_ms", "xcp_extended_can_id"}
 FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
     "can": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "id_min", "id_max", "diagnostic_bias", "extended_probability", "include_remote", "include_error", "progress_interval", "progress_seconds"},
     "dbc": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "dbc_file", "progress_interval", "progress_seconds"},
@@ -237,7 +237,7 @@ FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
     "xcp": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "target_ids", "request_ids", "request_modes", "request_mix", "malformed_rate", "progress_interval", "progress_seconds"},
 }
 
-CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "target_id", "isotp_request_id_start", "isotp_request_id_end", "xcp_request_id_start", "xcp_request_id_end", "keepalive_id", "arbitration_id"}
+CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "probe_id_start", "probe_id_end", "target_id", "isotp_request_id_start", "isotp_request_id_end", "xcp_request_id_start", "xcp_request_id_end", "keepalive_id", "arbitration_id"}
 CLICK_OPTIONAL_INT_KEYS = {"bitrate", "data_bitrate"}
 CLICK_LIST_AS_CSV_KEYS = {"interfaces", "target_ids", "opcodes", "bitrate_candidates", "data_bitrate_candidates", "probe_lengths"}
 

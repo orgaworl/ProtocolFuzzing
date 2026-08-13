@@ -348,8 +348,8 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
         inter_probe_delay_ms=args.inter_probe_delay_ms,
         active=active,
         passive=passive,
-        physical_start=args.physical_start,
-        physical_end=args.physical_end,
+        probe_id_start=args.probe_id_start,
+        probe_id_end=args.probe_id_end,
     )
     start_run_summary("scan", "scan", config.campaign, None)
     log_structured("info", "opening", {"interface": config.hardware.interface, "channel": config.hardware.channel, "bitrate": config.hardware.bitrate, "passive": config.passive, "active": config.active})
