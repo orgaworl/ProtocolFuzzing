@@ -37,9 +37,9 @@ no_progress = false
 
 [keepalive]
 # Shared by `uv run keepalive` and fuzzing entries when `keepalive = true` or `--keepalive` is set.
-preset = "tester-present"
-arbitration_id = 0x7df
-payload = "02 3E 00"
+preset = "default"
+arbitration_id = 0x500
+payload = "FF FF FF FF FF FF FF FF"
 interval_ms = 500.0
 format = "standard"
 listen = true

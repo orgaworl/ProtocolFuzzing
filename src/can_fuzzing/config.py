@@ -68,6 +68,14 @@ def apply_fd_timing_preset(merged: dict[str, Any], cli_keys: set[str]) -> None:
 
 
 KEEPALIVE_PRESETS: dict[str, dict[str, Any]] = {
+    "default": {
+        "arbitration_id": 0x500,
+        "payload": "FF FF FF FF FF FF FF FF",
+        "format": "standard",
+        "listen": True,
+        "listen_timeout": 0.05,
+        "check_message": True,
+    },
     "tester-present": {
         "arbitration_id": 0x7DF,
         "payload": "02 3E 00",
@@ -380,7 +388,7 @@ def _validate_required(section: str, merged: dict[str, Any], required_keys: set[
 
 
 def _resolve_keepalive_values(source: Any, *, enabled: bool) -> tuple[int, bytes, float, bool, bool, bool, float, bool]:
-    preset_name = normalize_keepalive_preset(getattr(source, "keepalive_preset", None) or getattr(source, "preset", None))
+    preset_name = normalize_keepalive_preset(getattr(source, "keepalive_preset", None) or getattr(source, "preset", None)) or "default"
     preset = KEEPALIVE_PRESETS.get(preset_name, {})
 
     def pick(attr_name: str, preset_key: str, required: bool = True) -> Any:
@@ -391,7 +399,7 @@ def _resolve_keepalive_values(source: Any, *, enabled: bool) -> tuple[int, bytes
             raise click.ClickException(f"missing required config value: {attr_name}")
         return value
 
-    if not enabled and preset_name is None and all(getattr(source, name, None) is None for name in (
+    if not enabled and all(getattr(source, name, None) is None for name in (
         "keepalive_id",
         "keepalive_payload",
         "keepalive_interval_ms",
@@ -407,7 +415,8 @@ def _resolve_keepalive_values(source: Any, *, enabled: bool) -> tuple[int, bytes
     payload_raw = pick("keepalive_payload", "payload")
     interval_ms = float(pick("keepalive_interval_ms", "interval_ms"))
     format_value = str(pick("keepalive_format", "format"))
-    fd_value = bool(pick("keepalive_fd", "fd"))
+    fd_config_value = pick("keepalive_fd", "fd", required=False)
+    fd_value = bool(getattr(source, "fd", False)) if fd_config_value is None else bool(fd_config_value)
     listen_value = bool(pick("keepalive_listen", "listen"))
     listen_timeout = float(pick("keepalive_listen_timeout", "listen_timeout"))
     check_message = bool(pick("keepalive_check_message", "check_message"))
@@ -513,11 +522,13 @@ def build_keepalive_args(params: dict[str, Any]) -> SimpleNamespace:
     args = build_args("keepalive", KEEPALIVE_CLI_KEYS, params)
     preset_name = normalize_keepalive_preset(getattr(args, "preset", None))
     if preset_name is None:
-        raise click.ClickException("missing required config value: preset")
+        preset_name = "default"
     preset = KEEPALIVE_PRESETS[preset_name]
     merged = dict(vars(args))
-    for key in ("arbitration_id", "payload", "interval_ms", "format", "fd", "listen", "listen_timeout", "check_message"):
+    for key in ("arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"):
         if merged.get(key) is None:
             merged[key] = preset[key]
+    if merged.get("fd") is None:
+        merged["fd"] = preset.get("fd", bool(merged.get("hardware_fd", False)))
     merged["preset"] = preset_name
     return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})

@@ -33,9 +33,9 @@ BASE_HW = {
 }
 
 BASE_KEEPALIVE = {
-    "preset": "tester-present",
-    "arbitration_id": 0x7DF,
-    "payload": "02 3E 00",
+    "preset": "default",
+    "arbitration_id": 0x500,
+    "payload": "FF FF FF FF FF FF FF FF",
     "interval_ms": 500.0,
     "format": "standard",
     "listen": True,
@@ -167,8 +167,8 @@ class CliTests(unittest.TestCase):
 
     def test_keepalive_click_defaults_allow_missing_interface_and_channel(self) -> None:
         args = cli_config.build_keepalive_args(BASE_KEEPALIVE)
-        self.assertEqual(args.arbitration_id, 0x7DF)
-        self.assertEqual(args.payload, "02 3E 00")
+        self.assertEqual(args.arbitration_id, 0x500)
+        self.assertEqual(args.payload, "FF FF FF FF FF FF FF FF")
         hardware = cli_config.build_hardware_config(BASE_HW)
         self.assertEqual(hardware.bitrate, 500000)
 
