@@ -76,10 +76,8 @@ xcp_inter_probe_delay_ms = 2.0
 xcp_extended_can_id = false
 
 [udsfuzz]
-output_dir = "result"
 cases = 1000
 seed = 2024
-campaign = "uds_baseline"
 inter_request_delay_ms = 10.0
 request_mode = "mixed"
 functional_id = 0x7df
@@ -87,14 +85,10 @@ physical_start = 0x7e0
 physical_end = 0x7e7
 service_bias = 0.85
 malformed_rate = 0.15
-progress_interval = 1
-progress_seconds = 1.0
 
 [obdfuzz]
-output_dir = "result"
 cases = 1000
 seed = 2025
-campaign = "obd_baseline"
 inter_request_delay_ms = 20.0
 request_mode = "functional"
 functional_id = 0x7df
@@ -102,14 +96,10 @@ physical_start = 0x7e0
 physical_end = 0x7e7
 pid_bias = 0.8
 malformed_rate = 0.1
-progress_interval = 1
-progress_seconds = 1.0
 
 [privatefuzz]
-output_dir = "result"
 cases = 1000
 seed = 2026
-campaign = "private_control_baseline"
 inter_request_delay_ms = 10.0
 target_ids = [0x100, 0x101, 0x200, 0x201, 0x300, 0x301]
 opcodes = [0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x7f, 0x80, 0xfe, 0xff]
@@ -118,8 +108,6 @@ malformed_rate = 0.15
 min_payload_len = 1
 max_payload_len = 8
 extended = false
-progress_interval = 1
-progress_seconds = 1.0
 
 [clean]
 result_dir = "result"

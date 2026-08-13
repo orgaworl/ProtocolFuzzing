@@ -428,6 +428,8 @@ def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> 
             protocol_section = FUZZ_PROTOCOL_SECTION_MAP.get(protocol)
             if protocol_section is not None:
                 merged.update(extract_config(raw_config, allowed_keys, protocol_section))
+            if merged.get("campaign") is None:
+                merged["campaign"] = FUZZ_PROTOCOL_CAMPAIGNS.get(protocol)
             merged.update(extract_keepalive_config(raw_config))
     cli_keys = {key for key, value in params.items() if value is not None}
     for key in cli_keys:
