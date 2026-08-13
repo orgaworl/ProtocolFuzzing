@@ -33,7 +33,6 @@ include_remote = false
 include_error = false
 progress_interval = 1
 progress_seconds = 1.0
-no_progress = false
 
 [keepalive]
 # Shared by `uv run keepalive` and fuzzing entries when `keepalive = true` or `--keepalive` is set.
@@ -51,7 +50,6 @@ output_dir = "result"
 probe_timeout = 0.15
 probe_delay_ms = 20.0
 probe_lengths = [12, 16, 32]
-no_progress = false
 
 [scan]
 protocol = "all"
@@ -76,7 +74,6 @@ xcp_request_id_end = 0x7ff
 xcp_response_timeout = 0.1
 xcp_inter_probe_delay_ms = 2.0
 xcp_extended_can_id = false
-no_progress = false
 
 [udsfuzz]
 output_dir = "result"
@@ -92,7 +89,6 @@ service_bias = 0.85
 malformed_rate = 0.15
 progress_interval = 1
 progress_seconds = 1.0
-no_progress = false
 
 [obdfuzz]
 output_dir = "result"
@@ -108,7 +104,6 @@ pid_bias = 0.8
 malformed_rate = 0.1
 progress_interval = 1
 progress_seconds = 1.0
-no_progress = false
 
 [privatefuzz]
 output_dir = "result"
@@ -125,7 +120,6 @@ max_payload_len = 8
 extended = false
 progress_interval = 1
 progress_seconds = 1.0
-no_progress = false
 
 [clean]
 result_dir = "result"
