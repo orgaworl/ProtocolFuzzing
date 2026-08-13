@@ -46,7 +46,6 @@ class DummyAdapter:
 class KeepaliveTests(unittest.TestCase):
     def test_keepalive_config_from_cli(self) -> None:
         args = cli_config.build_keepalive_args({
-            "preset": "ff-classic-response",
             "arbitration_id": 0xFFFFFFFF,
             "payload": "FF FF FF FF FF FF FF FF",
             "interval_ms": 500.0,
@@ -66,7 +65,7 @@ class KeepaliveTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[keepalive]\npreset = "ff-fd-no-response"\narbitration_id = 0xFFFFFFFF\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 500.0\nformat = "extended"\nlisten = false\nlisten_timeout = 0.05\ncheck_message = false\n',
+                '[keepalive]\narbitration_id = 0xFFFFFFFF\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 500.0\nformat = "extended"\nfd = true\nlisten = false\nlisten_timeout = 0.05\ncheck_message = false\n',
                 encoding="utf-8",
                 newline="\n",
             )

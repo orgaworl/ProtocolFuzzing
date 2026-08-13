@@ -33,7 +33,6 @@ BASE_HW = {
 }
 
 BASE_KEEPALIVE = {
-    "preset": "default",
     "arbitration_id": 0x500,
     "payload": "FF FF FF FF FF FF FF FF",
     "interval_ms": 500.0,
@@ -76,7 +75,7 @@ class CliTests(unittest.TestCase):
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
                 "[hardware]\nreceive_timeout = 0.05\nfd = false\nauto_bitrate = false\nbitrate = 500000\ncheck_message = true\ndrop_echo = true\n\n"
-                "[scan]\ncampaign = \"can_scan\"\noutput_dir = \"result\"\npassive_duration = 1.0\nactive_timeout = 0.1\ninter_probe_delay_ms = 1.0\nphysical_start = 0x7e0\nphysical_end = 0x7e7\npassive_only = false\nactive_only = false\nisotp = true\nisotp_request_id_start = 0x7e0\nisotp_request_id_end = 0x7e7\nisotp_sniff_time = 0.1\nisotp_verify_results = true\nisotp_extended_can_id = false\nisotp_protocol_probe = true\nisotp_protocol_probe_timeout = 0.2\nxcp = false\nxcp_request_id_start = 0x0\nxcp_request_id_end = 0x7ff\nxcp_response_timeout = 0.1\nxcp_inter_probe_delay_ms = 1.0\nxcp_extended_can_id = false\n",
+                "[scan]\ncampaign = \"can_scan\"\noutput_dir = \"result\"\npassive_duration = 1.0\nactive_timeout = 0.1\ninter_probe_delay_ms = 1.0\nphysical_start = 0x7e0\nphysical_end = 0x7e7\npassive_only = false\nactive_only = false\nisotp_request_id_start = 0x7e0\nisotp_request_id_end = 0x7e7\nisotp_sniff_time = 0.1\nisotp_verify_results = true\nisotp_extended_can_id = false\nisotp_protocol_probe = true\nisotp_protocol_probe_timeout = 0.2\nxcp_request_id_start = 0x0\nxcp_request_id_end = 0x7ff\nxcp_response_timeout = 0.1\nxcp_inter_probe_delay_ms = 1.0\nxcp_extended_can_id = false\n",
                 encoding="utf-8",
                 newline="\n",
             )
@@ -127,43 +126,43 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.bitrate, 500000)
         self.assertEqual(args.data_bitrate, 5000000)
 
-    def test_fuzz_keepalive_config_uses_preset_and_overrides(self) -> None:
+    def test_fuzz_keepalive_config_uses_direct_values(self) -> None:
         args = SimpleNamespace(
             keepalive=True,
-            keepalive_preset="ff-classic-response",
-            keepalive_id=None,
-            keepalive_payload="AA BB",
+            keepalive_id=0x500,
+            keepalive_payload="FF FF FF FF FF FF FF FF",
             keepalive_interval_ms=250.0,
-            keepalive_format=None,
-            keepalive_fd=None,
-            keepalive_listen=None,
-            keepalive_listen_timeout=None,
-            keepalive_check_message=None,
+            keepalive_format="standard",
+            keepalive_fd=False,
+            keepalive_listen=True,
+            keepalive_listen_timeout=0.05,
+            keepalive_check_message=False,
         )
         config = cli_config.build_fuzz_keepalive_config(args)
         self.assertTrue(config.enabled)
-        self.assertEqual(config.arbitration_id, 0xFFFFFFFF)
-        self.assertEqual(config.payload, b"\xAA\xBB")
+        self.assertEqual(config.arbitration_id, 0x500)
+        self.assertEqual(config.payload, b"\xFF" * 8)
         self.assertEqual(config.interval_ms, 250.0)
-        self.assertTrue(config.extended)
+        self.assertFalse(config.extended)
         self.assertFalse(config.fd)
         self.assertTrue(config.listen)
         self.assertFalse(config.check_message)
+
 
     def test_keepalive_section_maps_to_fuzz_keepalive_defaults(self) -> None:
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "can"\nkeepalive = true\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "can_baseline"\ninter_frame_delay_ms = 5.0\nid_min = 0x000\nid_max = 0x7ff\ndiagnostic_bias = 0.6\nextended_probability = 0.0\ninclude_remote = false\ninclude_error = false\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[keepalive]\npreset = "ff-classic-response"\narbitration_id = 0xFFFFFFFF\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 250.0\nformat = "extended"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = false\n',
+                '[fuzz]\nprotocol = "can"\nkeepalive = true\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "can_baseline"\ninter_frame_delay_ms = 5.0\nid_min = 0x000\nid_max = 0x7ff\ndiagnostic_bias = 0.6\nextended_probability = 0.0\ninclude_remote = false\ninclude_error = false\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[keepalive]\narbitration_id = 0x500\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 250.0\nformat = "standard"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = false\n',
                 encoding="utf-8",
                 newline="\n",
             )
             args = cli_config.build_args("fuzz", cli_config.FUZZ_KEYS, {"config": str(config_path)})
         config = cli_config.build_fuzz_keepalive_config(args)
-        self.assertTrue(config.enabled)
-        self.assertEqual(args.keepalive_preset, "ff-classic-response")
-        self.assertEqual(config.arbitration_id, 0xFFFFFFFF)
-        self.assertEqual(config.interval_ms, 250.0)
+        self.assertEqual(args.keepalive_id, 0x500)
+        self.assertEqual(config.arbitration_id, 0x500)
+        self.assertEqual(config.payload, b"\xFF" * 8)
+
 
     def test_keepalive_click_defaults_allow_missing_interface_and_channel(self) -> None:
         args = cli_config.build_keepalive_args(BASE_KEEPALIVE)
@@ -176,7 +175,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                'bitrate = 500000\nreceive_timeout = 0.05\nfd = false\ndata_bitrate = 2000000\nauto_bitrate = false\nbitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]\ndata_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]\nbitrate_probe_timeout = 0.2\nfd_timing_preset = "sae-j2284"\nfd_clock = 80000000\nnominal_sample_point = 87.5\ndata_sample_point = 80.0\ncheck_message = true\ndrop_echo = true\n\n[keepalive]\npreset = "tester-present"\narbitration_id = 0x7DF\npayload = "02 3E 00"\ninterval_ms = 250.0\nformat = "extended"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = true\n',
+                'bitrate = 500000\nreceive_timeout = 0.05\nfd = false\ndata_bitrate = 2000000\nauto_bitrate = false\nbitrate_candidates = [500000, 250000, 125000, 1000000, 800000, 100000, 50000]\ndata_bitrate_candidates = [2000000, 5000000, 4000000, 1000000]\nbitrate_probe_timeout = 0.2\nfd_timing_preset = "sae-j2284"\nfd_clock = 80000000\nnominal_sample_point = 87.5\ndata_sample_point = 80.0\ncheck_message = true\ndrop_echo = true\n\n[keepalive]\narbitration_id = 0x500\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 250.0\nformat = "extended"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = true\n',
                 encoding="utf-8",
                 newline="\n",
             )

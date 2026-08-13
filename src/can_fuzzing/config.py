@@ -67,44 +67,6 @@ def apply_fd_timing_preset(merged: dict[str, Any], cli_keys: set[str]) -> None:
             merged[key] = value
 
 
-KEEPALIVE_PRESETS: dict[str, dict[str, Any]] = {
-    "default": {
-        "arbitration_id": 0x500,
-        "payload": "FF FF FF FF FF FF FF FF",
-        "format": "standard",
-        "listen": True,
-        "listen_timeout": 0.05,
-        "check_message": True,
-    },
-    "tester-present": {
-        "arbitration_id": 0x7DF,
-        "payload": "02 3E 00",
-        "fd": False,
-        "format": "standard",
-        "listen": True,
-        "listen_timeout": 0.05,
-        "check_message": True,
-    },
-    "ff-fd-no-response": {
-        "arbitration_id": 0xFFFFFFFF,
-        "payload": "FF FF FF FF FF FF FF FF",
-        "fd": True,
-        "format": "extended",
-        "listen": False,
-        "listen_timeout": 0.05,
-        "check_message": False,
-    },
-    "ff-classic-response": {
-        "arbitration_id": 0xFFFFFFFF,
-        "payload": "FF FF FF FF FF FF FF FF",
-        "fd": False,
-        "format": "extended",
-        "listen": True,
-        "listen_timeout": 0.05,
-        "check_message": False,
-    },
-}
-
 FUZZ_PROTOCOL_ALIASES = {
     "baseline": "can",
     "can_baseline": "can",
@@ -143,14 +105,6 @@ def normalize_protocol(value: str | None) -> str | None:
         return None
     return FUZZ_PROTOCOL_ALIASES.get(token, token)
 
-
-def normalize_keepalive_preset(value: str | None) -> str | None:
-    if value is None:
-        return None
-    token = str(value).strip().lower().replace("_", "-")
-    if not token:
-        return None
-    return token if token in KEEPALIVE_PRESETS else None
 
 
 def parse_protocol(value: str) -> str:
@@ -259,7 +213,6 @@ FUZZ_KEYS = {
     "progress_interval",
     "progress_seconds",
     "keepalive",
-    "keepalive_preset",
     "keepalive_id",
     "keepalive_payload",
     "keepalive_interval_ms",
@@ -271,10 +224,10 @@ FUZZ_KEYS = {
 }
 LIST_KEYS = {"interfaces", "include_virtual", "json", "verbose"}
 CLEAN_KEYS = {"result_dir"}
-KEEPALIVE_FUZZ_KEYS = {"keepalive", "keepalive_preset", "keepalive_id", "keepalive_payload", "keepalive_interval_ms", "keepalive_format", "keepalive_fd", "keepalive_listen", "keepalive_listen_timeout", "keepalive_check_message"}
-KEEPALIVE_CLI_KEYS = {"preset", "fd", "arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"}
+KEEPALIVE_FUZZ_KEYS = {"keepalive", "keepalive_id", "keepalive_payload", "keepalive_interval_ms", "keepalive_format", "keepalive_fd", "keepalive_listen", "keepalive_listen_timeout", "keepalive_check_message"}
+KEEPALIVE_CLI_KEYS = {"fd", "arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"}
 FDCHECK_KEYS = {"campaign", "output_dir", "probe_timeout", "probe_delay_ms", "probe_lengths"}
-SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only", "scan_protocol", "isotp", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_inter_probe_delay_ms", "xcp_extended_can_id"}
+SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only", "scan_protocol", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_inter_probe_delay_ms", "xcp_extended_can_id"}
 FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
     "can": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "id_min", "id_max", "diagnostic_bias", "extended_probability", "include_remote", "include_error", "progress_interval", "progress_seconds"},
     "dbc": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "dbc_file", "progress_interval", "progress_seconds"},
@@ -336,7 +289,6 @@ def extract_keepalive_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     mapping = {
         "enabled": "keepalive",
         "keepalive": "keepalive",
-        "preset": "keepalive_preset",
         "arbitration_id": "keepalive_id",
         "id": "keepalive_id",
         "payload": "keepalive_payload",
@@ -388,13 +340,8 @@ def _validate_required(section: str, merged: dict[str, Any], required_keys: set[
 
 
 def _resolve_keepalive_values(source: Any, *, enabled: bool) -> tuple[int, bytes, float, bool, bool, bool, float, bool]:
-    preset_name = normalize_keepalive_preset(getattr(source, "keepalive_preset", None) or getattr(source, "preset", None)) or "default"
-    preset = KEEPALIVE_PRESETS.get(preset_name, {})
-
-    def pick(attr_name: str, preset_key: str, required: bool = True) -> Any:
+    def pick(attr_name: str, required: bool = True) -> Any:
         value = getattr(source, attr_name, None)
-        if value is None and preset_key in preset:
-            value = preset[preset_key]
         if value is None and required:
             raise click.ClickException(f"missing required config value: {attr_name}")
         return value
@@ -409,17 +356,17 @@ def _resolve_keepalive_values(source: Any, *, enabled: bool) -> tuple[int, bytes
         "keepalive_listen_timeout",
         "keepalive_check_message",
     )):
-        return (0, b"", 0.0, False, False, 0.0, False)
+        return (0, b"", 0.0, False, False, False, 0.0, False)
 
-    arbitration_id = int(pick("keepalive_id", "arbitration_id"))
-    payload_raw = pick("keepalive_payload", "payload")
-    interval_ms = float(pick("keepalive_interval_ms", "interval_ms"))
-    format_value = str(pick("keepalive_format", "format"))
-    fd_config_value = pick("keepalive_fd", "fd", required=False)
+    arbitration_id = int(pick("keepalive_id"))
+    payload_raw = pick("keepalive_payload")
+    interval_ms = float(pick("keepalive_interval_ms"))
+    format_value = str(pick("keepalive_format"))
+    fd_config_value = pick("keepalive_fd", required=False)
     fd_value = bool(getattr(source, "fd", False)) if fd_config_value is None else bool(fd_config_value)
-    listen_value = bool(pick("keepalive_listen", "listen"))
-    listen_timeout = float(pick("keepalive_listen_timeout", "listen_timeout"))
-    check_message = bool(pick("keepalive_check_message", "check_message"))
+    listen_value = bool(pick("keepalive_listen"))
+    listen_timeout = float(pick("keepalive_listen_timeout"))
+    check_message = bool(pick("keepalive_check_message"))
     return (arbitration_id, parse_hex_bytes(str(payload_raw)), interval_ms, format_value == "extended", fd_value, listen_value, listen_timeout, check_message)
 
 
@@ -520,15 +467,8 @@ def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> 
 
 def build_keepalive_args(params: dict[str, Any]) -> SimpleNamespace:
     args = build_args("keepalive", KEEPALIVE_CLI_KEYS, params)
-    preset_name = normalize_keepalive_preset(getattr(args, "preset", None))
-    if preset_name is None:
-        preset_name = "default"
-    preset = KEEPALIVE_PRESETS[preset_name]
     merged = dict(vars(args))
-    for key in ("arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"):
-        if merged.get(key) is None:
-            merged[key] = preset[key]
+    _validate_required("keepalive", merged, {"arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"})
     if merged.get("fd") is None:
-        merged["fd"] = preset.get("fd", bool(merged.get("hardware_fd", False)))
-    merged["preset"] = preset_name
+        merged["fd"] = bool(merged.get("hardware_fd", False))
     return SimpleNamespace(**{key: normalize_config_value(key, value) for key, value in merged.items()})

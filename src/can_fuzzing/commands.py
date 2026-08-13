@@ -296,7 +296,7 @@ def run_keepalive_from_args(args: SimpleNamespace) -> None:
         listen_timeout=keepalive_args.listen_timeout,
         check_message=keepalive_args.check_message,
     )
-    log_structured("info", "opening", {"interface": hardware.interface, "channel": hardware.channel, "bitrate": hardware.bitrate, "interval_ms": keepalive_args.interval_ms, "id": f"0x{keepalive_args.arbitration_id:x}", "preset": keepalive_args.preset})
+    log_structured("info", "opening", {"interface": hardware.interface, "channel": hardware.channel, "bitrate": hardware.bitrate, "interval_ms": keepalive_args.interval_ms, "id": f"0x{keepalive_args.arbitration_id:x}"})
     try:
         with CANHardwareAdapter(hardware) as adapter:
             worker = KeepaliveWorker(adapter, config, response_callback=log_keepalive_response)
@@ -372,19 +372,16 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
     log_structured("info", "files", {"ids_csv": summary['ids_csv_path'], "active_csv": summary['active_csv_path']})
     print_scan_objects_table(summary.get("observed_objects", []))
 
-    scan_protocol = getattr(args, "scan_protocol", None)
-    run_isotp_stage = bool(getattr(args, "isotp", False))
-    run_xcp_stage = bool(getattr(args, "xcp", False))
+    scan_protocol = getattr(args, "scan_protocol", "all")
+    run_isotp_stage = scan_protocol in {"all", "isotp", "uds", "obd"}
+    run_xcp_stage = scan_protocol in {"all", "xcp"}
     isotp_probe_protocols = ("uds", "obd")
-    if scan_protocol is not None:
-        run_isotp_stage = scan_protocol in {"all", "isotp", "uds", "obd"}
-        run_xcp_stage = scan_protocol in {"all", "xcp"}
-        if scan_protocol == "uds":
-            isotp_probe_protocols = ("uds",)
-        elif scan_protocol == "obd":
-            isotp_probe_protocols = ("obd",)
-        elif scan_protocol == "isotp":
-            isotp_probe_protocols = ()
+    if scan_protocol == "uds":
+        isotp_probe_protocols = ("uds",)
+    elif scan_protocol == "obd":
+        isotp_probe_protocols = ("obd",)
+    elif scan_protocol == "isotp":
+        isotp_probe_protocols = ()
 
     if run_isotp_stage:
         isotp_config = IsoTpScanConfig(
