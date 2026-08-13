@@ -42,7 +42,6 @@ check_message = true
 
 [fdcheck]
 campaign = "can_fd_check"
-output_dir = "result"
 probe_timeout = 0.15
 probe_delay_ms = 20.0
 probe_lengths = [12, 16, 32]
@@ -50,7 +49,6 @@ probe_lengths = [12, 16, 32]
 [scan]
 protocol = "all"
 campaign = "can_scan"
-output_dir = "result"
 passive_duration = 10.0
 active_timeout = 0.25
 inter_probe_delay_ms = 50.0
@@ -72,8 +70,6 @@ xcp_inter_probe_delay_ms = 2.0
 xcp_extended_can_id = false
 
 [udsfuzz]
-cases = 1000
-seed = 2024
 inter_request_delay_ms = 10.0
 request_mode = "mixed"
 functional_id = 0x7df
@@ -83,8 +79,6 @@ service_bias = 0.85
 malformed_rate = 0.15
 
 [obdfuzz]
-cases = 1000
-seed = 2025
 inter_request_delay_ms = 20.0
 request_mode = "functional"
 functional_id = 0x7df
@@ -94,8 +88,6 @@ pid_bias = 0.8
 malformed_rate = 0.1
 
 [privatefuzz]
-cases = 1000
-seed = 2026
 inter_request_delay_ms = 10.0
 target_ids = [0x100, 0x101, 0x200, 0x201, 0x300, 0x301]
 opcodes = [0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x7f, 0x80, 0xfe, 0xff]
@@ -106,7 +98,6 @@ max_payload_len = 8
 extended = false
 
 [clean]
-result_dir = "result"
 
 [list]
 interfaces = ["pcan", "vector", "kvaser", "slcan", "seeedstudio", "socketcan", "virtual"]

@@ -87,6 +87,9 @@ FUZZ_PROTOCOL_SECTION_MAP = {
     "private": "privatefuzz",
     "xcp": "xcpfuzz",
 }
+SHARED_FUZZ_KEYS = {"cases", "seed", "output_dir"}
+
+
 FUZZ_PROTOCOL_CAMPAIGNS = {
     "can": "can_baseline",
     "dbc": "dbc_baseline",
@@ -420,6 +423,12 @@ def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> 
         raw_config = read_toml_config(Path(str(config_path)))
         if section in {"hardware", "fuzz", "fdcheck", "scan", "keepalive"}:
             merged.update(extract_config(raw_config, HARDWARE_KEYS, "hardware"))
+        if section in {"fdcheck", "scan"}:
+            merged.update(extract_config(raw_config, {"output_dir"}, "fuzz"))
+        if section == "clean":
+            fuzz_output = extract_config(raw_config, {"output_dir"}, "fuzz").get("output_dir")
+            if fuzz_output is not None:
+                merged["result_dir"] = fuzz_output
         merged.update(extract_config(raw_config, allowed_keys, section))
         if section == "fuzz":
             protocol = normalize_protocol(params.get("protocol") or merged.get("protocol"))
@@ -427,7 +436,10 @@ def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> 
                 raise click.ClickException("missing required config value: protocol")
             protocol_section = FUZZ_PROTOCOL_SECTION_MAP.get(protocol)
             if protocol_section is not None:
-                merged.update(extract_config(raw_config, allowed_keys, protocol_section))
+                protocol_values = extract_config(raw_config, allowed_keys, protocol_section)
+                for shared_key in SHARED_FUZZ_KEYS:
+                    protocol_values.pop(shared_key, None)
+                merged.update(protocol_values)
             if merged.get("campaign") is None:
                 merged["campaign"] = FUZZ_PROTOCOL_CAMPAIGNS.get(protocol)
             merged.update(extract_keepalive_config(raw_config))

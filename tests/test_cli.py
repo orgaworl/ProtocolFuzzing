@@ -257,7 +257,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "dbc"\ninterface = "pcan"\nchannel = "PCAN_USBBUS1"\noutput_dir = "result"\ncases = 12\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\ncases = 33\ndbc_file = "from_config.dbc"\n',
+                '[fuzz]\nprotocol = "dbc"\ninterface = "pcan"\nchannel = "PCAN_USBBUS1"\noutput_dir = "result"\ncases = 12\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\ndbc_file = "from_config.dbc"\n',
                 encoding="utf-8",
                 newline="\n",
             )
@@ -268,6 +268,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0].protocol, "dbc")
         self.assertEqual(captured[0].cases, 9)
+        self.assertEqual(captured[0].seed, 1)
         self.assertEqual(captured[0].dbc_file, "from_config.dbc")
         self.assertFalse(hasattr(captured[0], "interface"))
 
@@ -311,7 +312,7 @@ class CliTests(unittest.TestCase):
             dbc_path.write_text('VERSION ""\nBO_ 256 Demo: 8 Vector__XXX\n SG_ Value : 0|8@1+ (1,0) [0|255] "" Vector__XXX\n', encoding="utf-8", newline="\n")
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "dbc"\ndbc_file = "' + str(dbc_path).replace('\\', '\\\\') + '"\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\ncases = 7\n',
+                '[fuzz]\nprotocol = "dbc"\ndbc_file = "' + str(dbc_path).replace('\\', '\\\\') + '"\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\n',
                 encoding="utf-8",
                 newline="\n",
             )
@@ -321,7 +322,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(captured[0].protocol, "dbc")
         self.assertEqual(captured[0].dbc_file, str(dbc_path))
-        self.assertEqual(captured[0].cases, 7)
+        self.assertEqual(captured[0].cases, 1)
 
 
 if __name__ == "__main__":

@@ -55,8 +55,6 @@ progress_interval = 1
 progress_seconds = 1.0
 
 [privatefuzz]
-cases = 33
-seed = 202
 """,
                 encoding="utf-8",
                 newline="\n",
@@ -67,7 +65,7 @@ seed = 202
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(captured[0].protocol, "private")
         self.assertEqual(captured[0].cases, 9)
-        self.assertEqual(captured[0].seed, 202)
+        self.assertEqual(captured[0].seed, 101)
         self.assertFalse(hasattr(captured[0], "interface"))
         self.assertFalse(hasattr(captured[0], "channel"))
 
