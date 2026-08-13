@@ -1,4 +1,9 @@
 # Shared CAN hardware defaults.
+
+[list]
+interfaces = ["pcan", "vector", "kvaser", "slcan", "seeedstudio", "socketcan", "virtual"]
+include_virtual = false
+
 [hardware]
 # interface = "pcan"
 # channel = "PCAN_USBBUS1"
@@ -13,23 +18,6 @@ fd_timing_preset = "sae-j2284"
 check_message = true
 drop_echo = true
 
-[fuzz]
-protocol = "can"
-keepalive = false
-cases = 0
-seed = 12345678
-campaign = "can_baseline"
-output_dir = "result"
-inter_frame_delay_ms = 5.0
-id_min = 0x000
-id_max = 0x7ff
-diagnostic_bias = 0.6
-extended_probability = 0.0
-include_remote = false
-include_error = false
-progress_interval = 1
-progress_seconds = 1.0
-
 [keepalive]
 # Shared by `uv run keepalive` and fuzzing entries when `keepalive = true` or `--keepalive` is set.
 arbitration_id = 0x500
@@ -41,21 +29,19 @@ listen_timeout = 0.05
 check_message = true
 
 [fdcheck]
-campaign = "can_fd_check"
 probe_timeout = 0.15
-probe_delay_ms = 20.0
+delay_ms = 20.0
 probe_lengths = [12, 16, 32]
 
 [scan]
 protocol = "all"
-campaign = "can_scan"
 passive_duration = 10.0
 active_timeout = 0.25
-inter_probe_delay_ms = 50.0
+delay_ms = 50.0
 probe_id_start = 0x7e0
 probe_id_end = 0x7e7
-passive_only = false
-active_only = false
+passive_scan = true
+active_scan = true
 isotp_request_id_start = 0x7e0
 isotp_request_id_end = 0x7e7
 isotp_sniff_time = 0.1
@@ -66,11 +52,25 @@ isotp_protocol_probe_timeout = 0.2
 xcp_request_id_start = 0x000
 xcp_request_id_end = 0x7ff
 xcp_response_timeout = 0.1
-xcp_inter_probe_delay_ms = 2.0
 xcp_extended_can_id = false
 
+[fuzz]
+protocol = "can"
+keepalive = false
+cases = 0
+seed = 12345678
+output_dir = "result"
+delay_ms = 5.0
+id_min = 0x000
+id_max = 0x7ff
+diagnostic_bias = 0.6
+extended_probability = 0.0
+include_remote = false
+include_error = false
+progress_interval = 1
+progress_seconds = 1.0
+
 [udsfuzz]
-inter_request_delay_ms = 10.0
 request_mode = "mixed"
 functional_id = 0x7df
 physical_start = 0x7e0
@@ -79,7 +79,6 @@ service_bias = 0.85
 malformed_rate = 0.15
 
 [obdfuzz]
-inter_request_delay_ms = 20.0
 request_mode = "functional"
 functional_id = 0x7df
 physical_start = 0x7e0
@@ -88,7 +87,6 @@ pid_bias = 0.8
 malformed_rate = 0.1
 
 [privatefuzz]
-inter_request_delay_ms = 10.0
 target_ids = [0x100, 0x101, 0x200, 0x201, 0x300, 0x301]
 opcodes = [0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x7f, 0x80, 0xfe, 0xff]
 structured_rate = 0.7
@@ -96,11 +94,3 @@ malformed_rate = 0.15
 min_payload_len = 1
 max_payload_len = 8
 extended = false
-
-[clean]
-
-[list]
-interfaces = ["pcan", "vector", "kvaser", "slcan", "seeedstudio", "socketcan", "virtual"]
-include_virtual = false
-json = false
-verbose = false

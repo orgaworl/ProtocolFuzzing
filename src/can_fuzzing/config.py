@@ -87,7 +87,7 @@ FUZZ_PROTOCOL_SECTION_MAP = {
     "private": "privatefuzz",
     "xcp": "xcpfuzz",
 }
-SHARED_FUZZ_KEYS = {"cases", "seed", "output_dir"}
+SHARED_FUZZ_KEYS = {"cases", "seed", "output_dir", "delay_ms"}
 
 
 FUZZ_PROTOCOL_CAMPAIGNS = {
@@ -97,6 +97,14 @@ FUZZ_PROTOCOL_CAMPAIGNS = {
     "obd": "obd_baseline",
     "private": "private_control_baseline",
     "xcp": "xcp_baseline",
+}
+SCAN_PROTOCOL_CAMPAIGNS = {
+    "all": "can_scan",
+    "can": "can_scan",
+    "isotp": "can_scan",
+    "uds": "uds_scan",
+    "obd": "obd_scan",
+    "xcp": "xcp_scan",
 }
 
 
@@ -187,11 +195,9 @@ FUZZ_KEYS = {
     "protocol",
     "cases",
     "seed",
-    "campaign",
     "output_dir",
+    "delay_ms",
     "receive_timeout",
-    "inter_frame_delay_ms",
-    "inter_request_delay_ms",
     "dbc_file",
     "request_mode",
     "functional_id",
@@ -225,19 +231,19 @@ FUZZ_KEYS = {
     "keepalive_listen_timeout",
     "keepalive_check_message",
 }
-LIST_KEYS = {"interfaces", "include_virtual", "json", "verbose"}
+LIST_KEYS = {"interfaces", "include_virtual"}
 CLEAN_KEYS = {"result_dir"}
 KEEPALIVE_FUZZ_KEYS = {"keepalive", "keepalive_id", "keepalive_payload", "keepalive_interval_ms", "keepalive_format", "keepalive_fd", "keepalive_listen", "keepalive_listen_timeout", "keepalive_check_message"}
 KEEPALIVE_CLI_KEYS = {"fd", "arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"}
-FDCHECK_KEYS = {"campaign", "output_dir", "probe_timeout", "probe_delay_ms", "probe_lengths"}
-SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "probe_id_start", "probe_id_end", "passive_only", "active_only", "scan_protocol", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_inter_probe_delay_ms", "xcp_extended_can_id"}
+FDCHECK_KEYS = {"probe_timeout", "delay_ms", "probe_lengths"}
+SCAN_KEYS = {"delay_ms", "passive_duration", "active_timeout", "probe_id_start", "probe_id_end", "active_scan", "passive_scan", "scan_protocol", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_extended_can_id"}
 FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
-    "can": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "id_min", "id_max", "diagnostic_bias", "extended_probability", "include_remote", "include_error", "progress_interval", "progress_seconds"},
-    "dbc": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "dbc_file", "progress_interval", "progress_seconds"},
-    "uds": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "service_bias", "malformed_rate", "progress_interval", "progress_seconds"},
-    "obd": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "pid_bias", "malformed_rate", "progress_interval", "progress_seconds"},
-    "private": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "target_ids", "opcodes", "structured_rate", "malformed_rate", "min_payload_len", "max_payload_len", "extended", "progress_interval", "progress_seconds"},
-    "xcp": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "target_ids", "request_ids", "request_modes", "request_mix", "malformed_rate", "progress_interval", "progress_seconds"},
+    "can": {"protocol", "cases", "seed", "output_dir", "inter_frame_delay_ms", "id_min", "id_max", "diagnostic_bias", "extended_probability", "include_remote", "include_error", "progress_interval", "progress_seconds"},
+    "dbc": {"protocol", "cases", "seed", "output_dir", "inter_frame_delay_ms", "dbc_file", "progress_interval", "progress_seconds"},
+    "uds": {"protocol", "cases", "seed", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "service_bias", "malformed_rate", "progress_interval", "progress_seconds"},
+    "obd": {"protocol", "cases", "seed", "output_dir", "inter_request_delay_ms", "request_mode", "functional_id", "physical_start", "physical_end", "pid_bias", "malformed_rate", "progress_interval", "progress_seconds"},
+    "private": {"protocol", "cases", "seed", "output_dir", "inter_request_delay_ms", "target_ids", "opcodes", "structured_rate", "malformed_rate", "min_payload_len", "max_payload_len", "extended", "progress_interval", "progress_seconds"},
+    "xcp": {"protocol", "cases", "seed", "output_dir", "inter_request_delay_ms", "target_ids", "request_ids", "request_modes", "request_mix", "malformed_rate", "progress_interval", "progress_seconds"},
 }
 
 CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "probe_id_start", "probe_id_end", "target_id", "isotp_request_id_start", "isotp_request_id_end", "xcp_request_id_start", "xcp_request_id_end", "keepalive_id", "arbitration_id"}
@@ -254,6 +260,8 @@ def normalize_config_value(key: str, value: Any) -> Any:
         return parse_optional_int(str(value)) if not isinstance(value, int) else value
     if key in CLICK_INT_KEYS:
         return parse_int(str(value)) if not isinstance(value, int) else value
+    if key == "delay_ms":
+        return float(value)
     if key == "protocol":
         return parse_protocol(str(value))
     if key == "scan_protocol":
@@ -327,6 +335,37 @@ def hardware_required_keys(merged: dict[str, Any]) -> set[str]:
         if merged.get("fd"):
             required.add("data_bitrate")
     return required
+
+
+
+
+def resolve_campaign(section: str, protocol: str | None = None, scan_protocol: str | None = None) -> str | None:
+    if section == "fuzz":
+        if protocol is None:
+            return None
+        return FUZZ_PROTOCOL_CAMPAIGNS.get(protocol)
+    if section == "scan":
+        if scan_protocol is None:
+            return SCAN_PROTOCOL_CAMPAIGNS["all"]
+        return SCAN_PROTOCOL_CAMPAIGNS.get(scan_protocol, SCAN_PROTOCOL_CAMPAIGNS["all"])
+    if section == "fdcheck":
+        return "can_fd_check"
+    return None
+
+
+def apply_delay_aliases(section: str, merged: dict[str, Any], protocol: str | None = None, scan_protocol: str | None = None) -> None:
+    delay_ms = merged.pop("delay_ms", None)
+    if delay_ms is None:
+        return
+    if section == "fuzz":
+        if protocol in {"can", "dbc"}:
+            merged["inter_frame_delay_ms"] = delay_ms
+        else:
+            merged["inter_request_delay_ms"] = delay_ms
+    elif section == "scan":
+        merged["inter_probe_delay_ms"] = delay_ms
+    elif section == "fdcheck":
+        merged["probe_delay_ms"] = delay_ms
 
 
 def protocol_required_keys(section: str, protocol: str) -> set[str]:
@@ -423,12 +462,8 @@ def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> 
         raw_config = read_toml_config(Path(str(config_path)))
         if section in {"hardware", "fuzz", "fdcheck", "scan", "keepalive"}:
             merged.update(extract_config(raw_config, HARDWARE_KEYS, "hardware"))
-        if section in {"fdcheck", "scan"}:
-            merged.update(extract_config(raw_config, {"output_dir"}, "fuzz"))
-        if section == "clean":
-            fuzz_output = extract_config(raw_config, {"output_dir"}, "fuzz").get("output_dir")
-            if fuzz_output is not None:
-                merged["result_dir"] = fuzz_output
+        if section in {"fdcheck", "scan", "clean"}:
+            merged.update(extract_config(raw_config, {"output_dir", "delay_ms"}, "fuzz"))
         merged.update(extract_config(raw_config, allowed_keys, section))
         if section == "fuzz":
             protocol = normalize_protocol(params.get("protocol") or merged.get("protocol"))
@@ -457,18 +492,29 @@ def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> 
         if protocol is None:
             raise click.ClickException("missing required config value: protocol")
         merged["protocol"] = protocol
+        apply_delay_aliases(section, merged, protocol=protocol)
         _validate_required(section, merged, protocol_required_keys(section, protocol))
+        if merged.get("campaign") is None:
+            merged["campaign"] = resolve_campaign(section, protocol=protocol)
     elif section == "keepalive":
         pass
     elif section == "list":
         _validate_required(section, merged, set())
     elif section == "clean":
         _validate_required(section, merged, CLEAN_KEYS)
+        if merged.get("result_dir") is None:
+            merged["result_dir"] = merged.get("output_dir")
     elif section == "fdcheck":
-        _validate_required(section, merged, FDCHECK_KEYS)
+        apply_delay_aliases(section, merged)
+        _validate_required(section, merged, FDCHECK_KEYS - {"delay_ms"})
+        if merged.get("campaign") is None:
+            merged["campaign"] = resolve_campaign(section)
     elif section == "scan":
         merged["scan_protocol"] = normalize_scan_protocol(merged.get("scan_protocol")) or "all"
-        _validate_required(section, merged, SCAN_KEYS - {"scan_protocol"})
+        apply_delay_aliases(section, merged, scan_protocol=merged["scan_protocol"])
+        _validate_required(section, merged, SCAN_KEYS - {"scan_protocol", "delay_ms"})
+        if merged.get("campaign") is None:
+            merged["campaign"] = resolve_campaign(section, scan_protocol=merged["scan_protocol"])
     else:
         _validate_required(section, merged, {key for key in allowed_keys if key != "config"})
 

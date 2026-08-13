@@ -218,13 +218,12 @@ def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
     dbc_file = Path(str(args.dbc_file))
     if not dbc_file.exists():
         raise SystemExit(f"DBC file not found: {dbc_file}")
-    campaign = args.campaign
     config = DBCFuzzConfig(
         hardware=hardware,
         dbc_file=dbc_file,
         cases=args.cases,
         seed=args.seed,
-        campaign=campaign,
+        campaign=args.campaign,
         output_dir=Path(args.output_dir),
         inter_frame_delay_ms=args.inter_frame_delay_ms,
         target_id=cli_target_id(args),
@@ -337,8 +336,8 @@ def run_list_from_args(args: SimpleNamespace) -> None:
 
 def run_scan_from_args(args: SimpleNamespace) -> None:
     hardware = resolve_hardware(args, "scan")
-    passive = not args.active_only
-    active = not args.passive_only
+    passive = bool(args.passive_scan)
+    active = bool(args.active_scan)
     config = ScanConfig(
         hardware=hardware,
         output_dir=Path(args.output_dir),
@@ -416,7 +415,7 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
             request_id_start=args.xcp_request_id_start,
             request_id_end=args.xcp_request_id_end,
             response_timeout=args.xcp_response_timeout,
-            inter_probe_delay_ms=args.xcp_inter_probe_delay_ms,
+            inter_probe_delay_ms=args.inter_probe_delay_ms,
             extended_can_id=args.xcp_extended_can_id,
         )
         log_structured("info", "xcp_scan", {"request_id_start": f"0x{xcp_config.request_id_start:x}", "request_id_end": f"0x{xcp_config.request_id_end:x}", "response_timeout": xcp_config.response_timeout})

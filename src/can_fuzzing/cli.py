@@ -40,6 +40,7 @@ Options:
   --channel CHANNEL     CAN channel name used by the selected python-can interface
   --cases CASES         number of generated requests or frames
   --seed SEED           random seed
+  --delay-ms DELAY_MS   delay between generated frames or requests
   --target-id TARGET_ID
                         target CAN ID for this fuzzing run
   --keepalive / --no-keepalive
@@ -76,6 +77,7 @@ FUZZ_OPTIONS = [
     (("--channel",), {"default": None, "help": "python-can channel"}),
     (("--cases",), {"type": int, "default": None, "help": "number of generated requests or frames"}),
     (("--seed",), {"type": int, "default": None, "help": "random seed"}),
+    (("--delay-ms",), {"type": float, "default": None, "help": "delay between generated frames or requests"}),
     (("--target-id",), {"default": None, "help": "target CAN ID for this fuzzing run, for example 0x7e0"}),
     (("--keepalive/--no-keepalive",), {"default": None, "help": "send keepalive frames during fuzzing"}),
 ]
@@ -83,6 +85,13 @@ FUZZ_OPTIONS = [
 SCAN_OPTIONS = [
     COMMON_CONFIG_OPTION,
     (("--protocol", "scan_protocol"), {"default": None, "help": "scan protocol: all, can, isotp, uds, obd, or xcp"}),
+]
+
+LIST_OPTIONS = [
+    COMMON_CONFIG_OPTION,
+    (("--include-virtual/--no-include-virtual",), {"default": None, "help": "include virtual CAN backends"}),
+    (("--json", "json"), {"is_flag": True, "default": None, "help": "print detected interfaces as JSON"}),
+    (("--verbose",), {"is_flag": True, "default": None, "help": "print backend debug information during discovery"}),
 ]
 
 
@@ -103,7 +112,7 @@ def _clean_click(**params: Any) -> None:
 
 
 @click.command(context_settings=CLICK_CONTEXT, help="List available CAN interfaces detected by python-can.")
-@command_options([COMMON_CONFIG_OPTION])
+@command_options(LIST_OPTIONS)
 def _list_click(**params: Any) -> None:
     run_list_from_args(build_args("list", LIST_KEYS, params))
 

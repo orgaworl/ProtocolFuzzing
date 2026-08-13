@@ -55,7 +55,7 @@ class CliTests(unittest.TestCase):
 
     def test_fuzz_click_only_exposes_common_run_options(self) -> None:
         names = {param.name for param in cli._fuzz_click.params}
-        self.assertEqual(names, {"config", "protocol", "interface", "channel", "cases", "seed", "target_id", "keepalive"})
+        self.assertEqual(names, {"config", "protocol", "interface", "channel", "cases", "seed", "delay_ms", "target_id", "keepalive"})
 
     def test_scan_click_accepts_protocol_selection(self) -> None:
         captured: list[SimpleNamespace] = []
@@ -75,7 +75,7 @@ class CliTests(unittest.TestCase):
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
                 "[hardware]\nreceive_timeout = 0.05\nfd = false\nauto_bitrate = false\nbitrate = 500000\ncheck_message = true\ndrop_echo = true\n\n"
-                "[scan]\ncampaign = \"can_scan\"\noutput_dir = \"result\"\npassive_duration = 1.0\nactive_timeout = 0.1\ninter_probe_delay_ms = 1.0\nprobe_id_start = 0x7e0\nprobe_id_end = 0x7e7\npassive_only = false\nactive_only = false\nisotp_request_id_start = 0x7e0\nisotp_request_id_end = 0x7e7\nisotp_sniff_time = 0.1\nisotp_verify_results = true\nisotp_extended_can_id = false\nisotp_protocol_probe = true\nisotp_protocol_probe_timeout = 0.2\nxcp_request_id_start = 0x0\nxcp_request_id_end = 0x7ff\nxcp_response_timeout = 0.1\nxcp_inter_probe_delay_ms = 1.0\nxcp_extended_can_id = false\n",
+                "[scan]\npassive_duration = 1.0\nactive_timeout = 0.1\ndelay_ms = 1.0\nprobe_id_start = 0x7e0\nprobe_id_end = 0x7e7\npassive_scan = true\nactive_scan = true\nisotp_request_id_start = 0x7e0\nisotp_request_id_end = 0x7e7\nisotp_sniff_time = 0.1\nisotp_verify_results = true\nisotp_extended_can_id = false\nisotp_protocol_probe = true\nisotp_protocol_probe_timeout = 0.2\nxcp_request_id_start = 0x0\nxcp_request_id_end = 0x7ff\nxcp_response_timeout = 0.1\nxcp_extended_can_id = false\n",
                 encoding="utf-8",
                 newline="\n",
             )
@@ -88,7 +88,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "uds"\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "uds_baseline"\ninter_request_delay_ms = 5.0\nrequest_mode = "mixed"\nfunctional_id = 0x7df\nphysical_start = 0x7e0\nphysical_end = 0x7e7\nservice_bias = 0.8\nmalformed_rate = 0.1\nprogress_interval = 1\nprogress_seconds = 1.0\n',
+                '[fuzz]\nprotocol = "uds"\noutput_dir = "result"\ncases = 1\nseed = 1\ndelay_ms = 5.0\nrequest_mode = "mixed"\nfunctional_id = 0x7df\nphysical_start = 0x7e0\nphysical_end = 0x7e7\nservice_bias = 0.8\nmalformed_rate = 0.1\nprogress_interval = 1\nprogress_seconds = 1.0\n',
                 encoding="utf-8",
                 newline="\n",
             )
@@ -153,7 +153,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "can"\nkeepalive = true\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "can_baseline"\ninter_frame_delay_ms = 5.0\nid_min = 0x000\nid_max = 0x7ff\ndiagnostic_bias = 0.6\nextended_probability = 0.0\ninclude_remote = false\ninclude_error = false\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[keepalive]\narbitration_id = 0x500\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 250.0\nformat = "standard"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = false\n',
+                '[fuzz]\nprotocol = "can"\nkeepalive = true\noutput_dir = "result"\ncases = 1\nseed = 1\ndelay_ms = 5.0\nid_min = 0x000\nid_max = 0x7ff\ndiagnostic_bias = 0.6\nextended_probability = 0.0\ninclude_remote = false\ninclude_error = false\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[keepalive]\narbitration_id = 0x500\npayload = "FF FF FF FF FF FF FF FF"\ninterval_ms = 250.0\nformat = "standard"\nlisten = true\nlisten_timeout = 0.05\ncheck_message = false\n',
                 encoding="utf-8",
                 newline="\n",
             )
@@ -257,7 +257,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "dbc"\ninterface = "pcan"\nchannel = "PCAN_USBBUS1"\noutput_dir = "result"\ncases = 12\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\ndbc_file = "from_config.dbc"\n',
+                '[fuzz]\nprotocol = "dbc"\ninterface = "pcan"\nchannel = "PCAN_USBBUS1"\noutput_dir = "result"\ncases = 12\nseed = 1\ndelay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\ndbc_file = "from_config.dbc"\n',
                 encoding="utf-8",
                 newline="\n",
             )
@@ -312,7 +312,7 @@ class CliTests(unittest.TestCase):
             dbc_path.write_text('VERSION ""\nBO_ 256 Demo: 8 Vector__XXX\n SG_ Value : 0|8@1+ (1,0) [0|255] "" Vector__XXX\n', encoding="utf-8", newline="\n")
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text(
-                '[fuzz]\nprotocol = "dbc"\ndbc_file = "' + str(dbc_path).replace('\\', '\\\\') + '"\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "dbc_baseline"\ninter_frame_delay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\n',
+                '[fuzz]\nprotocol = "dbc"\ndbc_file = "' + str(dbc_path).replace('\\', '\\\\') + '"\noutput_dir = "result"\ncases = 1\nseed = 1\ndelay_ms = 5.0\nprogress_interval = 1\nprogress_seconds = 1.0\n\n[dbcfuzz]\n',
                 encoding="utf-8",
                 newline="\n",
             )
