@@ -20,8 +20,8 @@ drop_echo = true
 [fuzz]
 protocol = "can"
 keepalive = false
-cases = 10000
-seed = 1337
+cases = 0
+seed = 12345678
 campaign = "can_baseline"
 output_dir = "result"
 inter_frame_delay_ms = 5.0
@@ -55,6 +55,7 @@ probe_lengths = [12, 16, 32]
 no_progress = false
 
 [scan]
+protocol = "all"
 campaign = "can_scan"
 output_dir = "result"
 passive_duration = 10.0

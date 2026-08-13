@@ -13,6 +13,7 @@ from can_fuzzing.scanning.isotp_scan import (
     build_summary,
     can_message_to_scapy_packet,
     classify_protocol_response,
+    protocol_probe_payloads,
     scapy_packet_to_can_frame,
 )
 from can_fuzzing.runtime.models import CANHardwareConfig, FrameFormat
@@ -59,6 +60,12 @@ class IsoTpScanTests(unittest.TestCase):
         self.assertEqual(classify_protocol_response("uds_default_session", bytes([0x7F, 0x10, 0x11])), "uds")
         self.assertEqual(classify_protocol_response("obd_supported_pids", bytes([0x41, 0x00, 0xBE, 0x1F, 0xA8, 0x13])), "obd")
         self.assertEqual(classify_protocol_response("obd_vehicle_info", bytes([0x7F, 0x09, 0x12])), "obd")
+
+    def test_protocol_probe_payloads_can_be_filtered(self) -> None:
+        uds_names = [name for name, _ in protocol_probe_payloads(("uds",))]
+        obd_names = [name for name, _ in protocol_probe_payloads(("obd",))]
+        self.assertEqual(uds_names, ["uds_tester_present", "uds_default_session"])
+        self.assertEqual(obd_names, ["obd_supported_pids", "obd_vehicle_info"])
 
 
 if __name__ == "__main__":

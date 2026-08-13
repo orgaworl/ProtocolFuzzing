@@ -25,6 +25,7 @@ class DBCFuzzConfig:
     campaign: str
     output_dir: Path
     inter_frame_delay_ms: float
+    target_id: int | None
     progress_interval: int
     progress_seconds: float
     keepalive: KeepaliveConfig
@@ -50,6 +51,8 @@ def run_dbc_fuzzing(config: DBCFuzzConfig, progress_callback: ProgressCallback |
     database = load_dbc_database(config.dbc_file)
     if not database.messages:
         raise ValueError(f"DBC file {config.dbc_file} does not define any BO_ messages")
+    if config.target_id is not None:
+        database = filter_database_by_target_id(database, config.target_id)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = config.output_dir / f"{config.campaign}_cases.csv"
@@ -267,6 +270,7 @@ def write_summary(
         "interrupted": interrupted,
         "dbc_file": str(config.dbc_file),
         "message_count": len(database.messages),
+        "target_id": f"0x{config.target_id:x}" if config.target_id is not None else None,
         "signal_count": database.signal_count,
         "cases": config.cases,
         "requested_cases": config.cases,
@@ -294,6 +298,13 @@ class DBCRequest:
     payload: bytes
     signal_values: dict[str, Any]
     strategy: str
+
+def filter_database_by_target_id(database: DBCDatabase, target_id: int) -> DBCDatabase:
+    messages = [message for message in database.messages if message.frame_id == target_id]
+    if not messages:
+        raise ValueError(f"DBC file does not define message for target CAN ID 0x{target_id:x}")
+    return DBCDatabase(messages=messages)
+
 
 def choose_message(rng: random.Random, database: DBCDatabase) -> DBCMessage:
     weights = [max(1, len(message.signals)) + max(1, message.size) for message in database.messages]

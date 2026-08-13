@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from can_fuzzing import cli
-from can_fuzzing import command_support, config as cli_config, commands, log
+from can_fuzzing import config as cli_config, commands, log
 from can_fuzzing.fuzzing.utils import iter_case_ids, should_report_progress
 
 BASE_HW = {
@@ -56,8 +56,48 @@ class CliTests(unittest.TestCase):
 
     def test_fuzz_click_only_exposes_common_run_options(self) -> None:
         names = {param.name for param in cli._fuzz_click.params}
-        self.assertEqual(names, {"config", "protocol", "interface", "channel", "cases", "seed", "keepalive"})
+        self.assertEqual(names, {"config", "protocol", "interface", "channel", "cases", "seed", "target_id", "keepalive"})
 
+    def test_scan_click_accepts_protocol_selection(self) -> None:
+        captured: list[SimpleNamespace] = []
+        runner = CliRunner()
+        with patch.object(cli, "run_scan_from_args", lambda args: captured.append(args)):
+            result = runner.invoke(
+                cli._scan_click,
+                ["-c", str(Path(__file__).resolve().parents[1] / "config.toml"), "--protocol", "uds"],
+                catch_exceptions=False,
+            )
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(captured[0].scan_protocol, "uds")
+
+
+    def test_scan_protocol_defaults_to_all(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                "[hardware]\nreceive_timeout = 0.05\nfd = false\nauto_bitrate = false\nbitrate = 500000\ncheck_message = true\ndrop_echo = true\n\n"
+                "[scan]\ncampaign = \"can_scan\"\noutput_dir = \"result\"\npassive_duration = 1.0\nactive_timeout = 0.1\ninter_probe_delay_ms = 1.0\nphysical_start = 0x7e0\nphysical_end = 0x7e7\npassive_only = false\nactive_only = false\nisotp = true\nisotp_request_id_start = 0x7e0\nisotp_request_id_end = 0x7e7\nisotp_sniff_time = 0.1\nisotp_verify_results = true\nisotp_extended_can_id = false\nisotp_protocol_probe = true\nisotp_protocol_probe_timeout = 0.2\nxcp = false\nxcp_request_id_start = 0x0\nxcp_request_id_end = 0x7ff\nxcp_response_timeout = 0.1\nxcp_inter_probe_delay_ms = 1.0\nxcp_extended_can_id = false\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            args = cli_config.build_args("scan", cli_config.SCAN_KEYS, {"config": str(config_path)})
+        self.assertEqual(args.scan_protocol, "all")
+
+
+    def test_fuzz_click_accepts_target_id(self) -> None:
+        captured: list[SimpleNamespace] = []
+        with TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                '[fuzz]\nprotocol = "uds"\noutput_dir = "result"\ncases = 1\nseed = 1\ncampaign = "uds_baseline"\ninter_request_delay_ms = 5.0\nrequest_mode = "mixed"\nfunctional_id = 0x7df\nphysical_start = 0x7e0\nphysical_end = 0x7e7\nservice_bias = 0.8\nmalformed_rate = 0.1\nprogress_interval = 1\nprogress_seconds = 1.0\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            runner = CliRunner()
+            with patch.object(cli, "run_fuzz_from_args", lambda args: captured.append(args)):
+                result = runner.invoke(cli._fuzz_click, ["-c", str(config_path), "--target-id", "0x7e2"], catch_exceptions=False)
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(captured[0].target_id, 0x7E2)
 
 
     def test_bitrate_auto_token_enables_auto_detection(self) -> None:
@@ -235,15 +275,15 @@ class CliTests(unittest.TestCase):
     def test_resolve_interface_auto_selects_single_detection(self) -> None:
         args = SimpleNamespace(interfaces=None, include_virtual=False, verbose=False, json=False)
         configs = [{"interface": "pcan", "channel": "PCAN_USBBUS1"}]
-        with patch.object(command_support, "list_can_interfaces", return_value=configs), patch.object(command_support, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
-            interface, channel = command_support.resolve_interface_and_channel(args, "fuzz")
+        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
+            interface, channel = commands.resolve_interface_and_channel(args, "fuzz")
         self.assertEqual((interface, channel), ("pcan", "PCAN_USBBUS1"))
 
     def test_resolve_interface_uses_discovery_when_channel_missing(self) -> None:
         args = SimpleNamespace(interface="pcan", channel=None, interfaces=None, include_virtual=False, verbose=False, json=False)
         configs = [{"interface": "pcan", "channel": "PCAN_USBBUS1"}]
-        with patch.object(command_support, "list_can_interfaces", return_value=configs), patch.object(command_support, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
-            interface, channel = command_support.resolve_interface_and_channel(args, "fuzz")
+        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None):
+            interface, channel = commands.resolve_interface_and_channel(args, "fuzz")
         self.assertEqual((interface, channel), ("pcan", "PCAN_USBBUS1"))
 
     def test_zero_cases_enable_infinite_fuzz_iteration(self) -> None:
@@ -261,8 +301,8 @@ class CliTests(unittest.TestCase):
             {"interface": "pcan", "channel": "PCAN_USBBUS1"},
             {"interface": "vector", "channel": "vcan0"},
         ]
-        with patch.object(command_support, "list_can_interfaces", return_value=configs), patch.object(command_support, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None), patch("builtins.input", return_value="2"):
-            interface, channel = command_support.resolve_interface_and_channel(args, "scan")
+        with patch.object(commands, "list_can_interfaces", return_value=configs), patch.object(commands, "print_interface_table", lambda _: None), patch.object(log, "warning", lambda *a, **k: None), patch.object(log, "info", lambda *a, **k: None), patch("builtins.input", return_value="2"):
+            interface, channel = commands.resolve_interface_and_channel(args, "scan")
         self.assertEqual((interface, channel), ("vector", "vcan0"))
 
     def test_click_fuzz_accepts_dbc_protocol_and_dbc_file(self) -> None:

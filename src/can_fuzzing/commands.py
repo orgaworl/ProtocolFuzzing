@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import json
 import shutil
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Iterator
 
 from .runtime.adapters import CANHardwareAdapter
 from .runtime.keepalive import KeepaliveConfig, KeepaliveWorker
 from .runtime.errors import CANConnectionError
 from .config import (
     build_fuzz_keepalive_config,
+    build_hardware_config,
     normalize_protocol,
     parse_hex_bytes,
     parse_int_list,
+    parse_interface_names,
 )
 from .scanning.can_fd_scan import FDCheckConfig, run_fdcheck
 from .fuzzing.can_fuzz import FuzzConfig, run_fuzzing
@@ -24,7 +29,7 @@ from .fuzzing.xcp_fuzz import XCPFuzzConfig, run_xcp_fuzzing
 from .scanning.can_id_scan import ScanConfig, run_scan
 from .scanning.isotp_scan import IsoTpScanConfig, run_isotp_scan
 from .scanning.xcp_scan import XCPScanConfig, run_xcp_scan
-from .command_support import discover_interfaces, resolve_hardware
+from .scanning.hardware_scan import list_can_interfaces
 from .log import (
     format_bool,
     log_can_event,
@@ -41,6 +46,90 @@ from .log import (
     print_status_value,
     status_level,
 )
+
+
+def resolve_hardware(args: SimpleNamespace, section: str):
+    args.interface, args.channel = resolve_interface_and_channel(args, section)
+    return build_hardware_config(vars(args))
+
+
+def resolve_interface_and_channel(args: SimpleNamespace, section: str) -> tuple[str, str]:
+    interface = getattr(args, "interface", None)
+    channel = getattr(args, "channel", None)
+    if interface and channel:
+        return str(interface), str(channel)
+
+    log_structured("warning", section, {"interface": "missing", "channel": "missing", "action": "running_interface_discovery"})
+    configs = discover_interfaces(args, interface=interface)
+
+    if getattr(args, "json", False):
+        print(json.dumps(configs, indent=2, default=str))
+    else:
+        print_interface_table(configs)
+
+    if not configs:
+        raise SystemExit(2)
+    if len(configs) == 1:
+        selected = configs[0]
+        log_structured("warning", "auto_selected", {"interface": selected.get("interface", ""), "channel": selected.get("channel", "")})
+        return str(selected.get("interface", "")), str(selected.get("channel", ""))
+
+    selected = prompt_interface_selection(configs)
+    log_structured("warning", "selected", {"interface": selected.get("interface", ""), "channel": selected.get("channel", "")})
+    return str(selected.get("interface", "")), str(selected.get("channel", ""))
+
+
+def discover_interfaces(args: SimpleNamespace, interface: Any | None = None) -> list[dict[str, Any]]:
+    interfaces = parse_interface_names(args.interfaces) if getattr(args, "interfaces", None) else None
+    if interface and interfaces is None:
+        interfaces = [str(interface)]
+    try:
+        return list_can_interfaces(
+            interfaces=interfaces,
+            include_virtual=getattr(args, "include_virtual", False),
+            verbose=getattr(args, "verbose", False),
+        )
+    except RuntimeError as exc:
+        log_structured("error", "error", {"message": exc})
+        raise SystemExit(2) from exc
+
+
+def prompt_interface_selection(configs: list[dict[str, Any]]) -> dict[str, Any]:
+    while True:
+        log_structured("info", "select_interface", {"action": "choose_by_index", "options": len(configs)})
+        for index, config in enumerate(configs, start=1):
+            log_structured(
+                "info",
+                f"option[{index}]",
+                {
+                    "interface": config.get("interface", ""),
+                    "channel": config.get("channel", ""),
+                    "device": config.get("device_name") or config.get("device") or "",
+                },
+            )
+        try:
+            choice = input(f"select CAN interface [1-{len(configs)}]: ").strip()
+        except EOFError:
+            raise SystemExit(2) from None
+        if not choice:
+            continue
+        try:
+            index = int(choice)
+        except ValueError:
+            log_structured("warning", "selection", {"value": choice, "reason": "numeric_index_required"})
+            continue
+        if 1 <= index <= len(configs):
+            return configs[index - 1]
+        log_structured("warning", "selection", {"value": choice, "range": f"1-{len(configs)}"})
+
+
+@contextmanager
+def command_errors() -> Iterator[None]:
+    try:
+        yield
+    except CANConnectionError as exc:
+        log_structured("error", "error", {"message": exc})
+        raise SystemExit(2) from exc
 
 
 def run_fuzz_from_args(args: SimpleNamespace) -> None:
@@ -69,7 +158,25 @@ def run_fuzz_from_args(args: SimpleNamespace) -> None:
     raise SystemExit(f"unsupported protocol: {protocol}")
 
 
+def cli_target_id(args: SimpleNamespace) -> int | None:
+    return getattr(args, "target_id", None)
+
+
+def override_targets_with_cli_id(args: SimpleNamespace) -> None:
+    target_id = cli_target_id(args)
+    if target_id is None:
+        return
+    args.id_min = target_id
+    args.id_max = target_id
+    args.request_mode = "physical"
+    args.physical_start = target_id
+    args.physical_end = target_id
+    args.target_ids = str(target_id)
+    args.request_ids = (target_id,)
+
+
 def run_can_fuzz_from_args(args: SimpleNamespace) -> None:
+    override_targets_with_cli_id(args)
     hardware = resolve_hardware(args, "fuzz")
     config = FuzzConfig(
         hardware=hardware,
@@ -104,6 +211,7 @@ def run_can_fuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
+    override_targets_with_cli_id(args)
     if not getattr(args, "dbc_file", None):
         raise SystemExit("missing required argument: --dbc_file")
     hardware = resolve_hardware(args, "fuzz")
@@ -119,6 +227,7 @@ def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
         campaign=campaign,
         output_dir=Path(args.output_dir),
         inter_frame_delay_ms=args.inter_frame_delay_ms,
+        target_id=cli_target_id(args),
         progress_interval=args.progress_interval,
         progress_seconds=args.progress_seconds,
         keepalive=build_fuzz_keepalive_config(args),
@@ -141,6 +250,7 @@ def run_dbcfuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_xcpfuzz_from_args(args: SimpleNamespace) -> None:
+    override_targets_with_cli_id(args)
     hardware = resolve_hardware(args, "fuzz")
     config = XCPFuzzConfig(
         hardware=hardware,
@@ -149,7 +259,7 @@ def run_xcpfuzz_from_args(args: SimpleNamespace) -> None:
         campaign=args.campaign,
         output_dir=Path(args.output_dir),
         inter_request_delay_ms=args.inter_request_delay_ms,
-        target_ids=tuple(args.target_ids),
+        target_ids=tuple(parse_int_list(args.target_ids)),
         request_ids=tuple(getattr(args, "request_ids", ()) or ()),
         request_modes=tuple(getattr(args, "request_modes", ()) or ()),
         request_mix=float(getattr(args, "request_mix", 0.5)),
@@ -262,7 +372,21 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
     log_structured("info", "files", {"ids_csv": summary['ids_csv_path'], "active_csv": summary['active_csv_path']})
     print_scan_objects_table(summary.get("observed_objects", []))
 
-    if getattr(args, "isotp", False):
+    scan_protocol = getattr(args, "scan_protocol", None)
+    run_isotp_stage = bool(getattr(args, "isotp", False))
+    run_xcp_stage = bool(getattr(args, "xcp", False))
+    isotp_probe_protocols = ("uds", "obd")
+    if scan_protocol is not None:
+        run_isotp_stage = scan_protocol in {"all", "isotp", "uds", "obd"}
+        run_xcp_stage = scan_protocol in {"all", "xcp"}
+        if scan_protocol == "uds":
+            isotp_probe_protocols = ("uds",)
+        elif scan_protocol == "obd":
+            isotp_probe_protocols = ("obd",)
+        elif scan_protocol == "isotp":
+            isotp_probe_protocols = ()
+
+    if run_isotp_stage:
         isotp_config = IsoTpScanConfig(
             hardware=hardware,
             output_dir=Path(args.output_dir),
@@ -272,8 +396,9 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
             sniff_time=args.isotp_sniff_time,
             verify_results=args.isotp_verify_results,
             extended_can_id=args.isotp_extended_can_id,
-            protocol_probe=args.isotp_protocol_probe,
+            protocol_probe=bool(args.isotp_protocol_probe and isotp_probe_protocols),
             protocol_probe_timeout=args.isotp_protocol_probe_timeout,
+            protocols=isotp_probe_protocols,
         )
         log_structured("info", "isotp_scan", {"request_id_start": f"0x{isotp_config.request_id_start:x}", "request_id_end": f"0x{isotp_config.request_id_end:x}", "sniff_time": isotp_config.sniff_time})
         try:
@@ -286,7 +411,7 @@ def run_scan_from_args(args: SimpleNamespace) -> None:
         print_isotp_nodes_table(isotp_summary.get("nodes", []))
         print_isotp_protocols_table(isotp_summary.get("protocols", []))
 
-    if getattr(args, "xcp", False):
+    if run_xcp_stage:
         xcp_config = XCPScanConfig(
             hardware=hardware,
             output_dir=Path(args.output_dir),
@@ -338,6 +463,7 @@ def run_fdcheck_from_args(args: SimpleNamespace) -> None:
 
 
 def run_udsfuzz_from_args(args: SimpleNamespace) -> None:
+    override_targets_with_cli_id(args)
     hardware = resolve_hardware(args, "fuzz")
     config = UDSFuzzConfig(
         hardware=hardware,
@@ -373,6 +499,7 @@ def run_udsfuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_obdfuzz_from_args(args: SimpleNamespace) -> None:
+    override_targets_with_cli_id(args)
     hardware = resolve_hardware(args, "fuzz")
     config = OBDFuzzConfig(
         hardware=hardware,
@@ -408,6 +535,7 @@ def run_obdfuzz_from_args(args: SimpleNamespace) -> None:
 
 
 def run_privatefuzz_from_args(args: SimpleNamespace) -> None:
+    override_targets_with_cli_id(args)
     hardware = resolve_hardware(args, "fuzz")
     config = PrivateFuzzConfig(
         hardware=hardware,

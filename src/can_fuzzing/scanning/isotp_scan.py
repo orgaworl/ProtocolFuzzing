@@ -29,6 +29,7 @@ class IsoTpScanConfig:
     extended_can_id: bool
     protocol_probe: bool = True
     protocol_probe_timeout: float = 0.2
+    protocols: tuple[str, ...] = ("uds", "obd")
 
 
 @dataclass(frozen=True)
@@ -163,7 +164,7 @@ def probe_protocols(adapter: CANHardwareAdapter, nodes: list[IsoTpNode], config:
         uds = False
         obd = False
         evidence: list[str] = []
-        for name, payload in protocol_probe_payloads():
+        for name, payload in protocol_probe_payloads(config.protocols):
             frame = CANFrame(
                 identifier=node.request_id,
                 data=encode_isotp_single_frame(payload),
@@ -197,13 +198,20 @@ def probe_protocols(adapter: CANHardwareAdapter, nodes: list[IsoTpNode], config:
     return results
 
 
-def protocol_probe_payloads() -> list[tuple[str, bytes]]:
-    return [
-        ("uds_tester_present", bytes([0x3E, 0x00])),
-        ("uds_default_session", bytes([0x10, 0x01])),
-        ("obd_supported_pids", bytes([0x01, 0x00])),
-        ("obd_vehicle_info", bytes([0x09, 0x00])),
-    ]
+def protocol_probe_payloads(protocols: tuple[str, ...] = ("uds", "obd")) -> list[tuple[str, bytes]]:
+    selected = {item.lower() for item in protocols}
+    payloads: list[tuple[str, bytes]] = []
+    if "uds" in selected:
+        payloads.extend([
+            ("uds_tester_present", bytes([0x3E, 0x00])),
+            ("uds_default_session", bytes([0x10, 0x01])),
+        ])
+    if "obd" in selected:
+        payloads.extend([
+            ("obd_supported_pids", bytes([0x01, 0x00])),
+            ("obd_vehicle_info", bytes([0x09, 0x00])),
+        ])
+    return payloads
 
 
 def collect_node_responses(adapter: CANHardwareAdapter, response_id: int, timeout: float):
@@ -279,6 +287,7 @@ def build_summary(config: IsoTpScanConfig, nodes: list[IsoTpNode], probe_results
         "node_count": len(nodes),
         "protocol_probe_enabled": config.protocol_probe,
         "protocol_probe_timeout": config.protocol_probe_timeout,
+        "protocol_probe_targets": list(config.protocols),
         "uds_node_count": sum(1 for item in probe_results if item.uds),
         "obd_node_count": sum(1 for item in probe_results if item.obd),
         "nodes": [

@@ -28,7 +28,7 @@ from .log import configure_logging, print_keyboard_interrupt_summary
 
 
 CLICK_CONTEXT = {"help_option_names": ["-h", "--help"]}
-COMMON_CONFIG_OPTION = (("-c", "--config"), {"type": click.Path(dir_okay=False), "default": None, "help": "TOML config file"})
+COMMON_CONFIG_OPTION = (("-c", "--config"), {"type": click.Path(dir_okay=False), "default": "config.toml", "show_default": True, "help": "TOML config file"})
 SHORT_FUZZ_HELP = """Usage: fuzz [OPTIONS]
 
 Options:
@@ -40,6 +40,8 @@ Options:
   --channel CHANNEL     CAN channel name used by the selected python-can interface
   --cases CASES         number of generated requests or frames
   --seed SEED           random seed
+  --target-id TARGET_ID
+                        target CAN ID for this fuzzing run
   --keepalive / --no-keepalive
                         send keepalive frames during fuzzing"""
 
@@ -74,7 +76,13 @@ FUZZ_OPTIONS = [
     (("--channel",), {"default": None, "help": "python-can channel"}),
     (("--cases",), {"type": int, "default": None, "help": "number of generated requests or frames"}),
     (("--seed",), {"type": int, "default": None, "help": "random seed"}),
+    (("--target-id",), {"default": None, "help": "target CAN ID for this fuzzing run, for example 0x7e0"}),
     (("--keepalive/--no-keepalive",), {"default": None, "help": "send keepalive frames during fuzzing"}),
+]
+
+SCAN_OPTIONS = [
+    COMMON_CONFIG_OPTION,
+    (("--protocol", "scan_protocol"), {"default": None, "help": "scan protocol: all, can, isotp, uds, obd, or xcp"}),
 ]
 
 
@@ -112,7 +120,7 @@ def _fdcheck_click(**params: Any) -> None:
 
 
 @click.command(context_settings=CLICK_CONTEXT, help="Scan devices and message IDs on a real CAN bus.")
-@command_options([COMMON_CONFIG_OPTION])
+@command_options(SCAN_OPTIONS)
 def _scan_click(**params: Any) -> None:
     run_scan_from_args(build_args("scan", SCAN_KEYS, params))
 

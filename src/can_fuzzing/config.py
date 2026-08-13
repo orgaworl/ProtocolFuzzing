@@ -152,6 +152,22 @@ def parse_protocol(value: str) -> str:
     raise click.BadParameter("protocol must be one of: can, dbc, uds, obd, private, xcp")
 
 
+SUPPORTED_SCAN_PROTOCOLS = ("all", "can", "isotp", "uds", "obd", "xcp")
+SCAN_PROTOCOL_ALIASES = {"iso-tp": "isotp", "iso_tp": "isotp", "iso15765-2": "isotp", "iso15765_2": "isotp"}
+
+
+def normalize_scan_protocol(value: Any) -> str | None:
+    if value is None:
+        return None
+    token = str(value).strip().lower().replace("_", "-")
+    if not token:
+        return None
+    normalized = SCAN_PROTOCOL_ALIASES.get(token, token)
+    if normalized not in SUPPORTED_SCAN_PROTOCOLS:
+        raise click.BadParameter(f"scan protocol must be one of: {', '.join(SUPPORTED_SCAN_PROTOCOLS)}")
+    return normalized
+
+
 def parse_int(value: str) -> int:
     return int(value, 0)
 
@@ -226,6 +242,7 @@ FUZZ_KEYS = {
     "include_remote",
     "include_error",
     "target_ids",
+    "target_id",
     "opcodes",
     "structured_rate",
     "min_payload_len",
@@ -249,7 +266,7 @@ CLEAN_KEYS = {"result_dir"}
 KEEPALIVE_FUZZ_KEYS = {"keepalive", "keepalive_preset", "keepalive_id", "keepalive_payload", "keepalive_interval_ms", "keepalive_format", "keepalive_fd", "keepalive_listen", "keepalive_listen_timeout", "keepalive_check_message"}
 KEEPALIVE_CLI_KEYS = {"preset", "fd", "arbitration_id", "payload", "interval_ms", "format", "listen", "listen_timeout", "check_message"}
 FDCHECK_KEYS = {"campaign", "output_dir", "probe_timeout", "probe_delay_ms", "probe_lengths"}
-SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only", "isotp", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_inter_probe_delay_ms", "xcp_extended_can_id"}
+SCAN_KEYS = {"campaign", "output_dir", "passive_duration", "active_timeout", "inter_probe_delay_ms", "physical_start", "physical_end", "passive_only", "active_only", "scan_protocol", "isotp", "isotp_request_id_start", "isotp_request_id_end", "isotp_sniff_time", "isotp_verify_results", "isotp_extended_can_id", "isotp_protocol_probe", "isotp_protocol_probe_timeout", "xcp", "xcp_request_id_start", "xcp_request_id_end", "xcp_response_timeout", "xcp_inter_probe_delay_ms", "xcp_extended_can_id"}
 FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
     "can": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "id_min", "id_max", "diagnostic_bias", "extended_probability", "include_remote", "include_error", "progress_interval", "progress_seconds"},
     "dbc": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_frame_delay_ms", "dbc_file", "progress_interval", "progress_seconds"},
@@ -259,7 +276,7 @@ FUZZ_REQUIRED_KEYS_BY_PROTOCOL = {
     "xcp": {"protocol", "cases", "seed", "campaign", "output_dir", "inter_request_delay_ms", "target_ids", "request_ids", "request_modes", "request_mix", "malformed_rate", "progress_interval", "progress_seconds"},
 }
 
-CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "isotp_request_id_start", "isotp_request_id_end", "xcp_request_id_start", "xcp_request_id_end", "keepalive_id", "arbitration_id"}
+CLICK_INT_KEYS = {"id_min", "id_max", "functional_id", "physical_start", "physical_end", "target_id", "isotp_request_id_start", "isotp_request_id_end", "xcp_request_id_start", "xcp_request_id_end", "keepalive_id", "arbitration_id"}
 CLICK_OPTIONAL_INT_KEYS = {"bitrate", "data_bitrate"}
 CLICK_LIST_AS_CSV_KEYS = {"interfaces", "target_ids", "opcodes", "bitrate_candidates", "data_bitrate_candidates", "probe_lengths"}
 
@@ -275,6 +292,8 @@ def normalize_config_value(key: str, value: Any) -> Any:
         return parse_int(str(value)) if not isinstance(value, int) else value
     if key == "protocol":
         return parse_protocol(str(value))
+    if key == "scan_protocol":
+        return normalize_scan_protocol(value)
     if key == "fd_timing_preset":
         normalized = normalize_fd_timing_preset(str(value))
         if normalized is None:
@@ -295,6 +314,8 @@ def extract_config(raw_config: dict[str, Any], allowed_keys: set[str], section: 
     if isinstance(section_config, dict):
         for key, value in section_config.items():
             normalized_key = key.replace("-", "_")
+            if section == "scan" and normalized_key == "protocol" and "scan_protocol" in allowed_keys:
+                normalized_key = "scan_protocol"
             if normalized_key in allowed_keys:
                 merged[normalized_key] = value
     return merged
@@ -476,7 +497,8 @@ def build_args(section: str, allowed_keys: set[str], params: dict[str, Any]) -> 
     elif section == "fdcheck":
         _validate_required(section, merged, FDCHECK_KEYS)
     elif section == "scan":
-        _validate_required(section, merged, SCAN_KEYS)
+        merged["scan_protocol"] = normalize_scan_protocol(merged.get("scan_protocol")) or "all"
+        _validate_required(section, merged, SCAN_KEYS - {"scan_protocol"})
     else:
         _validate_required(section, merged, {key for key in allowed_keys if key != "config"})
 
